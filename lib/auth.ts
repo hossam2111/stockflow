@@ -1,0 +1,27 @@
+import { SignJWT, jwtVerify } from "jose";
+import { cookies } from "next/headers";
+
+const secret=new TextEncoder().encode(process.env.AUTH_SECRET||"stockflow-development-secret-change-in-production");
+export type SessionUser={id:string;email:string;name:string;role:"ADMIN"|"EMPLOYEE";organizationId:string|null;isSuperAdmin:boolean};
+export async function createSession(user:SessionUser){
+  const token=await new SignJWT(user).setProtectedHeader({alg:"HS256"}).setSubject(user.id).setIssuedAt().setExpirationTime("8h").sign(secret);
+  (await cookies()).set("stockflow_session",token,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",path:"/",maxAge:60*60*8});
+}
+export async function getSession():Promise<SessionUser|null>{
+  const token=(await cookies()).get("stockflow_session")?.value;if(!token)return null;
+  try{const {payload}=await jwtVerify(token,secret);return {id:String(payload.id||payload.sub),email:String(payload.email),name:String(payload.name),role:payload.role as SessionUser["role"],organizationId:payload.organizationId?String(payload.organizationId):null,isSuperAdmin:Boolean(payload.isSuperAdmin)};}catch{return null;}
+}
+export async function requireSession(role?:SessionUser["role"]){const user=await getSession();if(!user||role&&user.role!==role)return null;return user;}
+
+export async function getWorkspaceContext(){
+  const session=await getSession();
+  if(!session)return null;
+  const selected=session.isSuperAdmin?(await cookies()).get("stockflow_org")?.value:null;
+  return {session,organizationId:selected||session.organizationId};
+}
+
+export async function requireWorkspaceAdmin(){
+  const context=await getWorkspaceContext();
+  if(!context||context.session.role!=="ADMIN"||!context.organizationId)return null;
+  return context;
+}

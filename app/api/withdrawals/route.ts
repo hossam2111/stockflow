@@ -1,0 +1,142 @@
+import { NextResponse } from "next/server";
+import { isMemoryDatabase, transaction } from "@/lib/db";
+import { z } from "zod";
+import { getWorkspaceContext } from "@/lib/auth";
+
+const schema = z.object({
+  employeeId:z.string().default("omar"),
+  serviceId:z.string(),
+  idempotencyKey:z.string().min(8).max(100),
+  customerName:z.string().trim().min(2).max(120),
+  customerPhone:z.string().trim().max(40).optional().default(""),
+  customerContact:z.string().trim().max(60).optional().default(""),
+  customerReference:z.string().trim().max(100).optional().default(""),
+  customerNotes:z.string().trim().max(1000).optional().default(""),
+  subscriptionStartDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  subscriptionMonths:z.number().int().min(1).max(24),
+  warrantyDays:z.number().int().min(0).max(730),
+  quantity:z.number().int().min(1).max(20).default(1),
+});
+
+function parseDate(value:string){
+  const date=new Date(`${value}T00:00:00.000Z`);
+  if(Number.isNaN(date.getTime())||date.toISOString().slice(0,10)!==value)throw new Error("INVALID_DATE");
+  return date;
+}
+
+function addMonths(date:Date,months:number){
+  const targetFirst=new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+months,1));
+  const lastDay=new Date(Date.UTC(targetFirst.getUTCFullYear(),targetFirst.getUTCMonth()+1,0)).getUTCDate();
+  return new Date(Date.UTC(targetFirst.getUTCFullYear(),targetFirst.getUTCMonth(),Math.min(date.getUTCDate(),lastDay)));
+}
+
+function dateOnly(date:Date){return date.toISOString().slice(0,10);}
+
+export async function POST(request: Request) {
+  const context=await getWorkspaceContext();if(!context?.organizationId)return NextResponse.json({error:"UNAUTHORIZED"},{status:401});const session=context.session;
+  const parsed=schema.safeParse(await request.json());
+  if(!parsed.success)return NextResponse.json({error:"INVALID_INPUT"},{status:400});
+  if(session.role==="EMPLOYEE")parsed.data.employeeId=session.id;
+  try {
+    const subscriptionStart=parseDate(parsed.data.subscriptionStartDate);
+    const subscriptionEnd=addMonths(subscriptionStart,parsed.data.subscriptionMonths);
+    const warrantyEnd=parsed.data.warrantyDays>0
+      ? new Date(subscriptionStart.getTime()+parsed.data.warrantyDays*24*60*60*1000)
+      : null;
+    const result=await transaction(async client=>{
+      const existing=await client.query("SELECT id,status,inventory_item_id FROM withdrawals WHERE idempotency_key=$1",[parsed.data.idempotencyKey]);
+      if(existing.rows[0])return {duplicate:true,withdrawal:existing.rows[0]};
+      const userResult=await client.query("SELECT id,active,daily_limit FROM users WHERE id=$1 AND organization_id=$2 FOR UPDATE",[parsed.data.employeeId,context.organizationId]);
+      const user=userResult.rows[0];
+      if(!user)throw new Error("EMPLOYEE_NOT_FOUND");
+      if(!user.active)throw new Error("EMPLOYEE_DISABLED");
+      const permissionResult=await client.query(`SELECT enabled,daily_limit FROM employee_service_permissions WHERE user_id=$1 AND service_id=$2`,[parsed.data.employeeId,parsed.data.serviceId]);
+      const permission=permissionResult.rows[0];
+      if(!permission?.enabled)throw new Error("SERVICE_NOT_ALLOWED");
+      const startOfDay=new Date(); startOfDay.setHours(0,0,0,0);
+      const totalUsageResult=await client.query(`SELECT COUNT(*)::int AS total
+        FROM withdrawals WHERE user_id=$1 AND status='COMPLETED' AND created_at>=$2`,[parsed.data.employeeId,startOfDay]);
+      const serviceUsageResult=await client.query(`SELECT COUNT(*)::int AS total
+        FROM withdrawals WHERE user_id=$1 AND service_id=$2 AND status='COMPLETED' AND created_at>=$3`,[parsed.data.employeeId,parsed.data.serviceId,startOfDay]);
+      if(totalUsageResult.rows[0].total+parsed.data.quantity>user.daily_limit)throw new Error("DAILY_LIMIT_REACHED");
+      if(serviceUsageResult.rows[0].total+parsed.data.quantity>permission.daily_limit)throw new Error("SERVICE_LIMIT_REACHED");
+      const lock=isMemoryDatabase()?"":"FOR UPDATE SKIP LOCKED";
+      const batchId=`BATCH-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
+      const allocatedIds:string[]=[];
+      const withdrawalIds:string[]=[];
+      const credentialMap=new Map<string,{
+        inventoryId:string;email:string;password:string;otpSecret:string|null;otpUrl:string|null;
+        accountType:"INDIVIDUAL"|"SHARED";allocatedUses:number;previousUsage:number;newUsage:number;
+        maxUsage:number;remainingUsage:number;status:string;
+        customerName:string;customerPhone:string;customerContact:string;customerReference:string;customerNotes:string;
+        subscriptionStartDate:string;subscriptionMonths:number;subscriptionEndDate:string;
+        warrantyDays:number;warrantyEndDate:string|null;
+      }>();
+      for(let index=0;index<parsed.data.quantity;index++){
+        const inventoryResult=await client.query(`SELECT * FROM inventory_items WHERE organization_id=$1 AND service_id=$2
+          AND status='AVAILABLE' AND current_usage<max_usage
+          ORDER BY CASE WHEN account_type='SHARED' THEN 0 ELSE 1 END, created_at ASC LIMIT 1 ${lock}`,
+          [context.organizationId,parsed.data.serviceId]);
+        const item=inventoryResult.rows[0];if(!item)throw new Error("OUT_OF_STOCK");allocatedIds.push(item.id);
+        const updated=await client.query(`UPDATE inventory_items SET current_usage=current_usage+1,status=CASE WHEN current_usage+1>=max_usage THEN 'FULL' ELSE 'AVAILABLE' END WHERE id=$1 AND current_usage<max_usage RETURNING *`,[item.id]);
+        const updatedItem=updated.rows[0];if(!updatedItem)throw new Error("INVENTORY_CONFLICT");
+        const withdrawalId=`WD-${crypto.randomUUID().slice(0,8).toUpperCase()}`;withdrawalIds.push(withdrawalId);
+        const itemIdempotencyKey=index===0?parsed.data.idempotencyKey:`${parsed.data.idempotencyKey}:${index}`;
+        await client.query(`INSERT INTO withdrawals(
+          id,organization_id,user_id,service_id,inventory_item_id,status,idempotency_key,previous_usage,new_usage,batch_id,batch_quantity,
+          customer_name,customer_phone,customer_contact,customer_reference,customer_notes,
+          subscription_start_date,subscription_months,subscription_end_date,warranty_days,warranty_end_date)
+          VALUES ($1,$2,$3,$4,$5,'COMPLETED',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,[
+          withdrawalId,context.organizationId,parsed.data.employeeId,parsed.data.serviceId,item.id,itemIdempotencyKey,item.current_usage,item.current_usage+1,batchId,parsed.data.quantity,
+          parsed.data.customerName,parsed.data.customerPhone||null,parsed.data.customerContact||null,parsed.data.customerReference||null,parsed.data.customerNotes||null,
+          dateOnly(subscriptionStart),parsed.data.subscriptionMonths,dateOnly(subscriptionEnd),parsed.data.warrantyDays,warrantyEnd?dateOnly(warrantyEnd):null,
+        ]);
+        const existingCredential=credentialMap.get(item.id);
+        if(existingCredential){
+          existingCredential.allocatedUses+=1;
+          existingCredential.newUsage=updatedItem.current_usage;
+          existingCredential.remainingUsage=Math.max(0,updatedItem.max_usage-updatedItem.current_usage);
+          existingCredential.status=updatedItem.status;
+        }else{
+          credentialMap.set(item.id,{
+            inventoryId:item.id,email:item.email,password:item.password,otpSecret:item.otp_secret,otpUrl:item.otp_url,
+            accountType:item.account_type,allocatedUses:1,previousUsage:item.current_usage,newUsage:updatedItem.current_usage,
+            maxUsage:item.max_usage,remainingUsage:Math.max(0,updatedItem.max_usage-updatedItem.current_usage),status:updatedItem.status,
+            customerName:parsed.data.customerName,customerPhone:parsed.data.customerPhone,customerContact:parsed.data.customerContact,
+            customerReference:parsed.data.customerReference,customerNotes:parsed.data.customerNotes,
+            subscriptionStartDate:dateOnly(subscriptionStart),subscriptionMonths:parsed.data.subscriptionMonths,
+            subscriptionEndDate:dateOnly(subscriptionEnd),warrantyDays:parsed.data.warrantyDays,
+            warrantyEndDate:warrantyEnd?dateOnly(warrantyEnd):null,
+          });
+        }
+      }
+      const credentials=Array.from(credentialMap.values());
+      await client.query(`INSERT INTO activity_logs(id,organization_id,actor_id,action,entity_type,entity_id,metadata) VALUES ($1,$2,$3,'WITHDRAWAL_BATCH','WITHDRAWAL_BATCH',$4,$5)`,
+        [crypto.randomUUID(),context.organizationId,parsed.data.employeeId,batchId,JSON.stringify({serviceId:parsed.data.serviceId,inventoryItemIds:allocatedIds,quantity:parsed.data.quantity,customerName:parsed.data.customerName,subscriptionEnd:dateOnly(subscriptionEnd),warrantyEnd:warrantyEnd?dateOnly(warrantyEnd):null})]);
+      return {
+        duplicate:false,
+        batch:{id:batchId,quantity:parsed.data.quantity,inventoryAccounts:credentials.length,withdrawalIds},credentials,
+      };
+    });
+    return NextResponse.json(result,{status:result.duplicate?200:201});
+  } catch(error) {
+    const code=error instanceof Error?error.message:"WITHDRAWAL_FAILED";
+    const status=["EMPLOYEE_DISABLED","SERVICE_NOT_ALLOWED","DAILY_LIMIT_REACHED","SERVICE_LIMIT_REACHED"].includes(code)?403:code==="OUT_OF_STOCK"?409:400;
+    return NextResponse.json({error:code},{status});
+  }
+}
+
+export async function GET(request:Request){
+  const context=await getWorkspaceContext();if(!context?.organizationId)return NextResponse.json({error:"UNAUTHORIZED"},{status:401});const session=context.session;
+  const requested=new URL(request.url).searchParams.get("employeeId");
+  const employeeId=session.role==="EMPLOYEE"?session.id:requested;
+  const base=`SELECT w.id,w.user_id,w.status,w.created_at,s.name AS service,w.inventory_item_id,u.name AS employee,i.account_type,
+    w.customer_name,w.customer_phone,w.customer_contact,w.customer_reference,w.customer_notes,
+    w.subscription_start_date,w.subscription_months,w.subscription_end_date,w.warranty_days,w.warranty_end_date
+    FROM withdrawals w JOIN services s ON s.id=w.service_id JOIN users u ON u.id=w.user_id
+    JOIN inventory_items i ON i.id=w.inventory_item_id`;
+  const result=employeeId
+    ? await (await import("@/lib/db")).query(`${base} WHERE w.organization_id=$1 AND w.user_id=$2 ORDER BY w.created_at DESC LIMIT 1000`,[context.organizationId,employeeId])
+    : await (await import("@/lib/db")).query(`${base} WHERE w.organization_id=$1 ORDER BY w.created_at DESC LIMIT 1000`,[context.organizationId]);
+  return NextResponse.json({withdrawals:result.rows});
+}

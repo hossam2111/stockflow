@@ -1,0 +1,18 @@
+CREATE TABLE IF NOT EXISTS organizations (id TEXT PRIMARY KEY,name TEXT NOT NULL,slug TEXT UNIQUE NOT NULL,active BOOLEAN NOT NULL DEFAULT TRUE,employee_limit INTEGER NOT NULL DEFAULT 25,inventory_limit INTEGER NOT NULL DEFAULT 10000,plan TEXT NOT NULL DEFAULT 'PRO',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+INSERT INTO organizations(id,name,slug,plan,employee_limit,inventory_limit) VALUES ('org-demo','شركة StockFlow التجريبية','stockflow-demo','PRO',50,50000) ON CONFLICT (id) DO NOTHING;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id TEXT REFERENCES organizations(id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE services ADD COLUMN IF NOT EXISTS organization_id TEXT REFERENCES organizations(id);
+ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS organization_id TEXT REFERENCES organizations(id);
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS organization_id TEXT REFERENCES organizations(id);
+ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS organization_id TEXT REFERENCES organizations(id);
+UPDATE users SET organization_id='org-demo' WHERE role='EMPLOYEE' AND organization_id IS NULL;
+UPDATE services SET organization_id='org-demo' WHERE organization_id IS NULL;
+UPDATE inventory_items SET organization_id='org-demo' WHERE organization_id IS NULL;
+UPDATE withdrawals SET organization_id='org-demo' WHERE organization_id IS NULL;
+UPDATE activity_logs SET organization_id='org-demo' WHERE organization_id IS NULL;
+UPDATE users SET is_super_admin=TRUE WHERE id='admin';
+ALTER TABLE services DROP CONSTRAINT IF EXISTS services_name_key;
+CREATE UNIQUE INDEX IF NOT EXISTS services_org_name_key ON services(organization_id,name);
+CREATE INDEX IF NOT EXISTS users_org_idx ON users(organization_id);
+CREATE INDEX IF NOT EXISTS services_org_idx ON services(organization_id);

@@ -1,0 +1,12 @@
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS customer_name TEXT;
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS customer_phone TEXT;
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS customer_contact TEXT;
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS customer_reference TEXT;
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS customer_notes TEXT;
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS subscription_start_date DATE;
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS subscription_months INTEGER;
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS subscription_end_date DATE;
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS warranty_days INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS warranty_end_date DATE;
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS batch_id TEXT;
+ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS batch_quantity INTEGER NOT NULL DEFAULT 1;
