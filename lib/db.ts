@@ -1,6 +1,5 @@
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { newDb } from "pg-mem";
-import bcrypt from "bcryptjs";
 
 declare global {
   var stockflowPool: Pool | undefined;
@@ -40,6 +39,7 @@ const schema = [
     account_type TEXT NOT NULL CHECK (account_type IN ('INDIVIDUAL','SHARED')),
     max_usage INTEGER NOT NULL DEFAULT 1, current_usage INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'AVAILABLE', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expiry_date DATE,
     UNIQUE(service_id, email)
   )`,
   `CREATE TABLE IF NOT EXISTS withdrawals (
@@ -50,6 +50,7 @@ const schema = [
     customer_name TEXT, customer_phone TEXT, customer_contact TEXT, customer_reference TEXT, customer_notes TEXT,
     subscription_start_date DATE, subscription_months INTEGER, subscription_end_date DATE,
     warranty_days INTEGER NOT NULL DEFAULT 0, warranty_end_date DATE,
+    selling_price INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   `CREATE TABLE IF NOT EXISTS activity_logs (
@@ -74,6 +75,7 @@ const withdrawalColumns = [
   "subscription_end_date DATE",
   "warranty_days INTEGER NOT NULL DEFAULT 0",
   "warranty_end_date DATE",
+  "selling_price INTEGER DEFAULT 0",
 ];
 
 const tenantColumns: Record<string, string[]> = {
@@ -105,8 +107,21 @@ export async function ensureDb() {
   if (!globalThis.stockflowReady) {
     globalThis.stockflowReady = (async () => {
       const pool = getPool();
+
+      // Serverless cold starts re-run this IIFE on every fresh instance. Creating the schema and
+      // running the ~85-query data seed on each one makes the first login slow enough to time out on
+      // Neon. Once a previous run has written the completion marker we skip the whole setup and this
+      // becomes a single round-trip. Databases left half-seeded by an earlier crash have no marker,
+      // so they simply re-run the (idempotent) seed once more and then get marked complete.
+      try {
+        const seeded = await pool.query("SELECT 1 FROM activity_logs WHERE id='seed-complete-v1' LIMIT 1");
+        if (seeded.rows.length > 0) return;
+      } catch {
+        // activity_logs does not exist yet on a brand-new database — fall through to full setup.
+      }
+
       for (const statement of schema) await pool.query(statement);
-      
+
       const adminHash = "$2b$10$Iok1m2/UFhOaM0.2NLatHOvmC5B9MC8vYDH26VehJvyJTKBWNHOYS";
       const companyAdminHash = "$2b$10$MopCftE/MgmAy1sjFSgVCOxdg6lnCNH2DR0kNZcn11pH9kdKF6H6i";
       const omarHash = "$2b$10$Lgg6TULfK1glxZNBcuN6lumC0nzYC2v1zrlACz1T5efjnifN0nKHG";
@@ -117,9 +132,9 @@ export async function ensureDb() {
 
       // Organizations
       await pool.query(`INSERT INTO organizations(id,name,slug,plan,employee_limit,inventory_limit)
-        VALUES ('org-demo','شركة StockFlow التجريبية','stockflow-demo','PRO',50,50000) ON CONFLICT (id) DO NOTHING`);
+        VALUES ('org-demo','شركة StockFlow التجريبية','stockflow-demo','PRO',50,50000) ON CONFLICT DO NOTHING`);
       await pool.query(`INSERT INTO organizations(id,name,slug,plan,employee_limit,inventory_limit)
-        VALUES ('org-innovate','مؤسسة الابتكار الرقمي','digital-innovations','BUSINESS',100,100000) ON CONFLICT (id) DO NOTHING`);
+        VALUES ('org-innovate','مؤسسة الابتكار الرقمي','digital-innovations','BUSINESS',100,100000) ON CONFLICT DO NOTHING`);
 
       // Users
       await pool.query(`INSERT INTO users(id,email,password_hash,name,role,organization_id,is_super_admin,team,active,daily_limit)
@@ -130,7 +145,7 @@ export async function ensureDb() {
                ('fatima','fatima@stockflow.io',$5,'فاطمة عمر','EMPLOYEE','org-demo',FALSE,'فريق التصميم',TRUE,25),
                ('innovate-admin','innovate@stockflow.io',$6,'أدمن الابتكار','ADMIN','org-innovate',FALSE,'الإدارة',TRUE,999),
                ('khaled','khaled@stockflow.io',$7,'خالد حسن','EMPLOYEE','org-innovate',FALSE,'فريق المطورين',TRUE,30)
-        ON CONFLICT (id) DO NOTHING`, [adminHash, companyAdminHash, omarHash, youssefHash, fatimaHash, innovateAdminHash, khaledHash]);
+        ON CONFLICT DO NOTHING`, [adminHash, companyAdminHash, omarHash, youssefHash, fatimaHash, innovateAdminHash, khaledHash]);
 
       // Services
       const serviceRows = [
@@ -141,24 +156,24 @@ export async function ensureDb() {
       
       // Seed Services for org-demo and permissions
       for (const row of serviceRows) {
-        await pool.query(`INSERT INTO services(id,organization_id,name,default_daily_limit) VALUES ($1,'org-demo',$2,$3) ON CONFLICT (id) DO NOTHING`, row);
+        await pool.query(`INSERT INTO services(id,organization_id,name,default_daily_limit) VALUES ($1,'org-demo',$2,$3) ON CONFLICT DO NOTHING`, row);
         
         await pool.query(`INSERT INTO employee_service_permissions(user_id,service_id,enabled,daily_limit)
-          VALUES ('omar',$1,$2,$3) ON CONFLICT (user_id,service_id) DO NOTHING`, [row[0], !["perplexity","midjourney","spotify","netflix","github"].includes(String(row[0])), row[2]]);
+          VALUES ('omar',$1,$2,$3) ON CONFLICT DO NOTHING`, [row[0], !["perplexity","midjourney","spotify","netflix","github"].includes(String(row[0])), row[2]]);
           
         await pool.query(`INSERT INTO employee_service_permissions(user_id,service_id,enabled,daily_limit)
-          VALUES ('youssef',$1,$2,$3) ON CONFLICT (user_id,service_id) DO NOTHING`, [row[0], !["adobe","midjourney","github"].includes(String(row[0])), row[2]]);
+          VALUES ('youssef',$1,$2,$3) ON CONFLICT DO NOTHING`, [row[0], !["adobe","midjourney","github"].includes(String(row[0])), row[2]]);
           
         await pool.query(`INSERT INTO employee_service_permissions(user_id,service_id,enabled,daily_limit)
-          VALUES ('fatima',$1,true,$2) ON CONFLICT (user_id,service_id) DO NOTHING`, [row[0], row[2]]);
+          VALUES ('fatima',$1,true,$2) ON CONFLICT DO NOTHING`, [row[0], row[2]]);
       }
 
       // Seed Services for org-innovate and permissions
       for (const row of serviceRows) {
         const svcId = `svc-in-${row[0]}`;
-        await pool.query(`INSERT INTO services(id,organization_id,name,default_daily_limit) VALUES ($1,'org-innovate',$2,$3) ON CONFLICT (id) DO NOTHING`, [svcId, row[1], row[2]]);
+        await pool.query(`INSERT INTO services(id,organization_id,name,default_daily_limit) VALUES ($1,'org-innovate',$2,$3) ON CONFLICT DO NOTHING`, [svcId, row[1], row[2]]);
         await pool.query(`INSERT INTO employee_service_permissions(user_id,service_id,enabled,daily_limit)
-          VALUES ('khaled',$1,TRUE,$2) ON CONFLICT (user_id,service_id) DO NOTHING`, [svcId, row[2]]);
+          VALUES ('khaled',$1,TRUE,$2) ON CONFLICT DO NOTHING`, [svcId, row[2]]);
       }
 
       // Inventory
@@ -185,9 +200,12 @@ export async function ensureDb() {
       ];
       
       for (const item of inventory) {
+        const maxUsage = item[7] as number;
+        const currentUsage = item[8] as number;
+        const status = currentUsage >= maxUsage ? 'FULL' : 'AVAILABLE';
         await pool.query(`INSERT INTO inventory_items
           (id,organization_id,service_id,email,password,otp_secret,otp_url,account_type,max_usage,current_usage,status)
-          VALUES ($1,'org-demo',$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $9>=$8 THEN 'FULL' ELSE 'AVAILABLE' END) ON CONFLICT (id) DO NOTHING`, item);
+          VALUES ($1,'org-demo',$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`, [...item, status]);
       }
 
       // Seed Inventory for org-innovate
@@ -197,9 +215,12 @@ export async function ensureDb() {
         ["STK-IN-1003","svc-in-claude","innovate-claude1@gmail.com","Pass#Claude1","","","INDIVIDUAL",1,0]
       ];
       for (const item of innovateInventory) {
+        const maxUsage = item[7] as number;
+        const currentUsage = item[8] as number;
+        const status = currentUsage >= maxUsage ? 'FULL' : 'AVAILABLE';
         await pool.query(`INSERT INTO inventory_items
           (id,organization_id,service_id,email,password,otp_secret,otp_url,account_type,max_usage,current_usage,status)
-          VALUES ($1,'org-innovate',$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $9>=$8 THEN 'FULL' ELSE 'AVAILABLE' END) ON CONFLICT (id) DO NOTHING`, item);
+          VALUES ($1,'org-innovate',$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`, [...item, status]);
       }
 
       // Seed historical withdrawals (for dashboard trends and logs)
@@ -214,19 +235,34 @@ export async function ensureDb() {
       ];
 
       for (const wd of withdrawals) {
+        // A drifted database may not contain the exact inventory id this demo row references (e.g. the
+        // slot was taken by an earlier row with a different id). Insert only when the referenced item
+        // exists so the seed never trips the inventory foreign key and can finish + mark itself done.
         await pool.query(`INSERT INTO withdrawals(
           id,organization_id,user_id,service_id,inventory_item_id,status,idempotency_key,previous_usage,new_usage,batch_id,batch_quantity,
           customer_name,customer_phone,customer_contact,customer_reference,customer_notes,
           subscription_start_date,subscription_months,subscription_end_date,warranty_days,warranty_end_date,created_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,NOW() - $22::INTERVAL) ON CONFLICT (id) DO NOTHING`, wd);
+          SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,NOW() - $22::INTERVAL
+          WHERE EXISTS (SELECT 1 FROM inventory_items WHERE id=$5) ON CONFLICT DO NOTHING`, wd);
       }
+
+      // Mark the seed as complete so subsequent cold starts short-circuit the block above.
+      await pool.query(`INSERT INTO activity_logs(id,action,metadata) VALUES ('seed-complete-v1','SEED_COMPLETE','{}') ON CONFLICT DO NOTHING`);
     })();
   }
-  await globalThis.stockflowReady;
+  // A cached promise that has already rejected stays rejected forever, so a single failed seed would
+  // poison every later request until the process restarts. Clear the guard on failure so the next
+  // request retries instead.
+  try {
+    await globalThis.stockflowReady;
+  } catch (error) {
+    globalThis.stockflowReady = undefined;
+    throw error;
+  }
   if (!globalThis.stockflowMigrationReady) {
     globalThis.stockflowMigrationReady = (async () => {
       const pool = getPool();
-      for (const [table, definitions] of Object.entries({ ...tenantColumns, withdrawals: withdrawalColumns })) {
+      for (const [table, definitions] of Object.entries({ ...tenantColumns, inventory_items: [...tenantColumns.inventory_items, "expiry_date DATE"], withdrawals: withdrawalColumns })) {
         const existing = await pool.query<{ column_name: string }>(
           "SELECT column_name FROM information_schema.columns WHERE table_name=$1", [table],
         );
@@ -238,7 +274,12 @@ export async function ensureDb() {
       }
     })();
   }
-  await globalThis.stockflowMigrationReady;
+  try {
+    await globalThis.stockflowMigrationReady;
+  } catch (error) {
+    globalThis.stockflowMigrationReady = undefined;
+    throw error;
+  }
 }
 
 export async function query<T extends QueryResultRow = QueryResultRow>(text: string, values: unknown[] = []) {

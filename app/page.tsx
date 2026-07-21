@@ -23,18 +23,24 @@ import {
   Moon,
   PackageCheck,
   PackageMinus,
+  Pencil,
   Plus,
+  Power,
+  PowerOff,
+  RotateCcw,
   Search,
   Settings as SettingsIcon,
   ShieldCheck,
   Sparkles,
   Sun,
+  Trash2,
   TrendingUp,
   Trophy,
   Upload,
   UsersRound,
   type LucideIcon,
 } from "lucide-react";
+import { LiveOtp } from "./LiveOtp";
 
 type View =
   | "organizations"
@@ -139,6 +145,7 @@ type InventoryRow = {
   rawStatus: string;
   added: string;
   otpReady: boolean;
+  expiryDate: string | null;
 };
 
 type ServiceRecord = {
@@ -179,6 +186,7 @@ type WithdrawalCredentials = {
   subscriptionEndDate: string;
   warrantyDays: number;
   warrantyEndDate: string | null;
+  sellingPrice?: number;
 };
 
 type WithdrawalCustomerDetails = {
@@ -191,6 +199,7 @@ type WithdrawalCustomerDetails = {
   subscriptionMonths: number;
   warrantyDays: number;
   quantity: number;
+  sellingPrice: number;
 };
 
 type DashboardStats = {
@@ -201,6 +210,8 @@ type DashboardStats = {
   lowStock: { id: string; name: string; available_slots: number }[];
   topEmployees: { id: string; name: string; team: string; withdrawals: number }[];
   recentActivity: { id: string; name: string; service: string; customer_name: string | null; created_at: string }[];
+  revenue?: { today: number; month: number };
+  topServicesByRevenue?: { name: string; revenue: number }[];
 };
 
 type EmployeeRecord = {
@@ -369,8 +380,9 @@ export default function Home() {
           password: String(item.password ?? ""), otpKey: String(item.otp_secret ?? ""), otpUrl: String(item.otp_url ?? ""),
           type: item.account_type === "SHARED" ? "مشترك" : "فردي", accountType: item.account_type as "INDIVIDUAL" | "SHARED",
           usage: `${item.current_usage} / ${item.max_usage}`, currentUsage: Number(item.current_usage), maxUsage: Number(item.max_usage),
-          rawStatus: String(item.status), status: item.status === "AVAILABLE" ? "متاح" : item.status === "FULL" ? "ممتلئ" : String(item.status),
+          rawStatus: String(item.status), status: item.status === "AVAILABLE" ? "متاح" : item.status === "FULL" ? "ممتلئ" : item.status === "DISABLED" ? "معطل" : String(item.status),
           added: new Date(String(item.created_at)).toLocaleString("ar-EG"), otpReady: Boolean(item.otp_ready),
+          expiryDate: item.expiry_date ? String(item.expiry_date).slice(0, 10) : null,
         })));
       }).catch(() => {});
       fetch("/api/dashboard").then((r) => r.ok ? r.json() : Promise.reject()).then(setDashboardStats).catch(() => {});
@@ -383,8 +395,8 @@ export default function Home() {
     const result = await response.json();
     if (!response.ok) {
       if(result.error==="EMPLOYEE_DISABLED") setEmployeeBlocked(true);
-      const messages:Record<string,string>={EMPLOYEE_DISABLED:"تم إيقاف صلاحية السحب لحسابك بواسطة الأدمن",SERVICE_NOT_ALLOWED:"هذه الخدمة غير مسموحة لك",DAILY_LIMIT_REACHED:"وصلت إلى الحد اليومي العام",SERVICE_LIMIT_REACHED:"وصلت إلى حد هذه الخدمة",OUT_OF_STOCK:"لا يوجد مخزون متاح لهذه الخدمة"};
-      flash(messages[result.error]||"تعذر تنفيذ السحب");
+      const messages:Record<string,string>={EMPLOYEE_DISABLED:"تم إيقاف صلاحية السحب لحسابك بواسطة الأدمن",EMPLOYEE_NOT_FOUND:"حساب السحب غير موجود ضمن هذه المؤسسة — السحب متاح لحسابات الموظفين فقط",SERVICE_NOT_ALLOWED:"هذه الخدمة غير مسموحة لك",DAILY_LIMIT_REACHED:"وصلت إلى الحد اليومي العام",SERVICE_LIMIT_REACHED:"وصلت إلى حد هذه الخدمة",OUT_OF_STOCK:"لا يوجد مخزون متاح لهذه الخدمة — أضف حسابات لهذه الخدمة أولًا",INVENTORY_CONFLICT:"تعارض في المخزون، برجاء المحاولة مرة أخرى",INVALID_INPUT:"بيانات الطلب غير مكتملة أو غير صحيحة",INVALID_DATE:"تاريخ بداية الاشتراك غير صحيح"};
+      flash(messages[result.error]||`تعذر تنفيذ السحب (${result.error||response.status})`);
       return;
     }
     setWithdrawalCredentials(result.credentials ?? []);
@@ -594,6 +606,35 @@ export default function Home() {
               flash={flash}
               onExport={() => downloadCsv("stockflow-inventory.csv", [["ID","Service","Email","Type","Usage","Status","Added"], ...filteredInventory.map((row) => [row.id,row.service,row.account,row.type,row.usage,row.status,row.added])])}
               onImport={() => setImportOpen(true)}
+              onDelete={async (id: string) => {
+                const response = await fetch(`/api/inventory?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                  flash(result.error === "ITEM_HAS_HISTORY" ? "لا يمكن حذف حساب تم السحب عليه من قبل — احتفظنا به لحماية سجل المبيعات" : result.error === "NOT_FOUND" ? "الحساب غير موجود" : "تعذر حذف الحساب");
+                  return false;
+                }
+                flash("تم حذف الحساب من المخزون");
+                setDataVersion((value) => value + 1);
+                return true;
+              }}
+              onBulkDelete={async (ids: string[]) => {
+                let deleted = 0, blocked = 0, failed = 0;
+                for (const id of ids) {
+                  const response = await fetch(`/api/inventory?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+                  if (response.ok) { deleted++; continue; }
+                  const result = await response.json().catch(() => ({}));
+                  if (result.error === "ITEM_HAS_HISTORY") blocked++; else failed++;
+                }
+                if (deleted) setDataVersion((value) => value + 1);
+                return { deleted, blocked, failed };
+              }}
+              onUpdate={async (id: string, patch: Record<string, unknown>) => {
+                const response = await fetch(`/api/inventory?id=${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) { flash(result.error === "NOT_FOUND" ? "الحساب غير موجود" : "تعذر حفظ التعديل"); return false; }
+                setDataVersion((value) => value + 1);
+                return true;
+              }}
             />
           )}
           {view === "services" && (
@@ -788,6 +829,8 @@ function Dashboard({
               ["المتاح", stats?.inventory.available ?? 0],
               ["سحوبات اليوم", stats?.withdrawalsToday ?? 0],
               ["الموظفون النشطون", stats?.employees.active ?? 0],
+              ["إيراد اليوم (ج.م)", stats?.revenue?.today ?? 0],
+              ["إيراد الشهر (ج.م)", stats?.revenue?.month ?? 0],
             ]);
             flash("تم تنزيل تقرير لوحة التحكم");
           }}
@@ -830,6 +873,14 @@ function Dashboard({
           change={`من ${stats?.employees.total ?? 0}`}
           note={`${Math.max(0, (stats?.employees.total ?? 0) - (stats?.employees.active ?? 0))} موقوفين`}
           tone="orange"
+        />
+        <Metric
+          icon={FileBarChart}
+          label="إيراد اليوم"
+          value={`${(stats?.revenue?.today ?? 0).toLocaleString("ar-EG")} ج.م`}
+          change={`${(stats?.revenue?.month ?? 0).toLocaleString("ar-EG")} ج.م هذا الشهر`}
+          note="من أسعار البيع المسجّلة"
+          tone="green"
         />
       </div>
       <div className="dashboardGrid">
@@ -1029,7 +1080,7 @@ function Withdraw({
 }) {
   const [details, setDetails] = useState<WithdrawalCustomerDetails>({
     customerName: "", customerPhone: "", customerContact: "واتساب", customerReference: "", customerNotes: "",
-    subscriptionStartDate: todayInCairo(), subscriptionMonths: 1, warrantyDays: 30, quantity: 1,
+    subscriptionStartDate: todayInCairo(), subscriptionMonths: 1, warrantyDays: 30, quantity: 1, sellingPrice: 0,
   });
   const [submitting, setSubmitting] = useState(false);
   const [messageCopied, setMessageCopied] = useState(false);
@@ -1043,6 +1094,7 @@ function Withdraw({
     subscriptionStartDate: details.subscriptionStartDate, subscriptionMonths: details.subscriptionMonths,
     subscriptionEndDate: addMonthsToDate(details.subscriptionStartDate, details.subscriptionMonths),
     warrantyDays: details.warrantyDays, warrantyEndDate: details.warrantyDays ? addDaysToDate(details.subscriptionStartDate, details.warrantyDays) : null,
+    sellingPrice: details.sellingPrice,
   };
   const accounts = credentials.length ? credentials : [fallbackAccount];
   const account = accounts[0];
@@ -1054,9 +1106,10 @@ function Withdraw({
   const previewWarrantyEnd = details.warrantyDays ? addDaysToDate(details.subscriptionStartDate, details.warrantyDays) : null;
   const totalAllocatedUses = accounts.reduce((total, item) => total + item.allocatedUses, 0);
   const accountLines = accounts.map((item, index) => `${item.accountType === "SHARED" ? "الحساب المشترك" : "الحساب"} ${index + 1}\n📧 الإيميل: ${item.email}\n🔑 كلمة المرور: ${item.password}\n🔐 مفتاح OTP: ${item.otpSecret || "غير متوفر"}\n🌐 رابط استخراج OTP: ${item.otpUrl || "غير متوفر"}${item.accountType === "SHARED" ? `\n👥 عدد مرات السحب: ${item.allocatedUses}\n📊 الاستخدام بعد السحب: ${item.newUsage} من ${item.maxUsage}\n📦 المتبقي: ${item.remainingUsage}` : ""}`).join("\n\n");
-  const deliveryMessage = `أهلًا ${account.customerName || "بك"} 👋\nتم تسجيل ${totalAllocatedUses} ${totalAllocatedUses === 1 ? "عملية سحب" : "عمليات سحب"} في خدمة ${selected.name} بنجاح.\n\n${accountLines}\n\n📅 بداية الاشتراك: ${formatArabicDate(account.subscriptionStartDate)}\n⏳ مدة الاشتراك: ${account.subscriptionMonths} ${account.subscriptionMonths === 1 ? "شهر" : "شهور"}\n🏁 تاريخ الانتهاء: ${formatArabicDate(account.subscriptionEndDate)}\n🛡️ الضمان: ${account.warrantyDays ? `${account.warrantyDays} يوم — حتى ${formatArabicDate(account.warrantyEndDate)}` : "بدون ضمان"}\n\n⚠️ برجاء عدم تغيير بيانات الحسابات.\nشكرًا لاختيارك لنا 💙`;
+  const priceLine = account.sellingPrice ? `\n💵 سعر البيع: ${account.sellingPrice} ج.م` : "";
+  const deliveryMessage = `أهلًا ${account.customerName || "بك"} 👋\nتم تسجيل ${totalAllocatedUses} ${totalAllocatedUses === 1 ? "عملية سحب" : "عمليات سحب"} في خدمة ${selected.name} بنجاح.\n\n${accountLines}\n\n📅 بداية الاشتراك: ${formatArabicDate(account.subscriptionStartDate)}\n⏳ مدة الاشتراك: ${account.subscriptionMonths} ${account.subscriptionMonths === 1 ? "شهر" : "شهور"}\n🏁 تاريخ الانتهاء: ${formatArabicDate(account.subscriptionEndDate)}\n🛡️ الضمان: ${account.warrantyDays ? `${account.warrantyDays} يوم — حتى ${formatArabicDate(account.warrantyEndDate)}` : "بدون ضمان"}${priceLine}\n\n⚠️ برجاء عدم تغيير بيانات الحسابات.\nشكرًا لاختيارك لنا 💙`;
   function resetForNext() {
-    setDetails({ customerName: "", customerPhone: "", customerContact: "واتساب", customerReference: "", customerNotes: "", subscriptionStartDate: todayInCairo(), subscriptionMonths: 1, warrantyDays: 30, quantity: 1 });
+    setDetails({ customerName: "", customerPhone: "", customerContact: "واتساب", customerReference: "", customerNotes: "", subscriptionStartDate: todayInCairo(), subscriptionMonths: 1, warrantyDays: 30, quantity: 1, sellingPrice: 0 });
     onReset();
   }
   async function submitWithdrawal() {
@@ -1212,6 +1265,9 @@ function Withdraw({
                       <option value={0}>بدون ضمان</option><option value={7}>7 أيام</option><option value={14}>14 يومًا</option><option value={30}>30 يومًا</option><option value={60}>60 يومًا</option><option value={90}>90 يومًا</option><option value={180}>6 شهور</option><option value={365}>سنة</option>
                     </select>
                   </label>
+                  <label>سعر البيع (ج.م)
+                    <input type="number" min={0} value={details.sellingPrice || ""} onChange={(event) => setDetails({ ...details, sellingPrice: Math.max(0, Number(event.target.value) || 0) })} placeholder="0" />
+                  </label>
                   <label className="wideField">ملاحظات العميل
                     <textarea value={details.customerNotes} onChange={(event) => setDetails({ ...details, customerNotes: event.target.value })} placeholder="أي تعليمات أو تفاصيل إضافية..." />
                   </label>
@@ -1257,6 +1313,7 @@ function Withdraw({
                       <Credential label="مفتاح OTP" value={item.otpSecret || "غير متوفر"} />
                       <Credential label="موقع استخراج OTP" value={item.otpUrl || "غير متوفر"} link={Boolean(item.otpUrl)} />
                     </div>
+                    {item.otpSecret && <div className="otpLiveRow"><LiveOtp secret={item.otpSecret} /></div>}
                     {item.accountType === "SHARED" && (
                       <div className={`sharedAccountState ${item.status === "FULL" ? "full" : "available"}`}>
                         {item.status === "FULL"
@@ -1271,6 +1328,7 @@ function Withdraw({
                 <div><span>العميل</span><b>{account.customerName}</b><small>{[account.customerPhone, account.customerContact].filter(Boolean).join(" • ") || "بدون بيانات تواصل"}</small></div>
                 <div><span>مدة الاشتراك</span><b>{account.subscriptionMonths} {account.subscriptionMonths === 1 ? "شهر" : "شهور"}</b><small>{formatArabicDate(account.subscriptionStartDate)} — {formatArabicDate(account.subscriptionEndDate)}</small></div>
                 <div><span>الضمان</span><b>{account.warrantyDays ? `${account.warrantyDays} يوم` : "بدون ضمان"}</b><small>{account.warrantyEndDate ? `ينتهي ${formatArabicDate(account.warrantyEndDate)}` : "غير مضاف"}</small></div>
+                <div><span>سعر البيع</span><b>{account.sellingPrice ? `${account.sellingPrice} ج.م` : "—"}</b><small>{accounts.length > 1 ? `إجمالي: ${(account.sellingPrice || 0) * accounts.length} ج.م` : "سعر فردي"}</small></div>
               </div>
               <div className="templateHead">
                 <div>
@@ -1374,6 +1432,9 @@ function Inventory({
   setQuery,
   onImport,
   onExport,
+  onDelete,
+  onBulkDelete,
+  onUpdate,
   flash,
 }: {
   rows: InventoryRow[];
@@ -1382,11 +1443,31 @@ function Inventory({
   flash: (s: string) => void;
   onImport: () => void;
   onExport: () => void;
+  onDelete: (id: string) => Promise<boolean>;
+  onBulkDelete: (ids: string[]) => Promise<{ deleted: number; blocked: number; failed: number }>;
+  onUpdate: (id: string, patch: Record<string, unknown>) => Promise<boolean>;
 }) {
   const [serviceFilter, setServiceFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [typeFilter, setTypeFilter] = useState("ALL");
   const [selected, setSelected] = useState<InventoryRow | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  async function handleDelete(row: InventoryRow, closeModal?: boolean) {
+    if (deletingId) return;
+    if (!window.confirm(`حذف الحساب ${row.account} (${row.id}) نهائيًا من المخزون؟`)) return;
+    setDeletingId(row.id);
+    try {
+      const ok = await onDelete(row.id);
+      if (ok && closeModal) setSelected(null);
+    } finally {
+      setDeletingId(null);
+    }
+  }
+  function toggleOne(id: string) {
+    setSelectedIds((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  }
   const visibleRows = useMemo(() => rows.filter((row) =>
     (serviceFilter === "ALL" || row.service === serviceFilter) &&
     (statusFilter === "ALL" || row.rawStatus === statusFilter) &&
@@ -1395,6 +1476,46 @@ function Inventory({
   const total = rows.length;
   const available = rows.filter((row) => row.rawStatus === "AVAILABLE").length;
   const used = rows.filter((row) => row.currentUsage > 0).length;
+  const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => selectedIds.has(row.id));
+  const selectedCount = visibleRows.filter((row) => selectedIds.has(row.id)).length;
+  function toggleAll() {
+    setSelectedIds((prev) => (visibleRows.every((row) => prev.has(row.id)) ? new Set() : new Set(visibleRows.map((row) => row.id))));
+  }
+  async function bulkDelete() {
+    const ids = visibleRows.filter((row) => selectedIds.has(row.id)).map((row) => row.id);
+    if (!ids.length || bulkBusy) return;
+    if (!window.confirm(`حذف ${ids.length} حساب محدد؟ (الحسابات التي تم السحب عليها لن تُحذف)`)) return;
+    setBulkBusy(true);
+    try {
+      const { deleted, blocked, failed } = await onBulkDelete(ids);
+      setSelectedIds(new Set());
+      flash(`تم حذف ${deleted} حساب${blocked ? ` — تعذّر حذف ${blocked} (لها سجل سحب)` : ""}${failed ? ` — فشل ${failed}` : ""}`);
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+  const [editing, setEditing] = useState<InventoryRow | null>(null);
+  const [editForm, setEditForm] = useState({ password: "", maxUsage: 1, accountType: "INDIVIDUAL" as "INDIVIDUAL" | "SHARED", expiryDate: "" });
+  const [savingEdit, setSavingEdit] = useState(false);
+  function openEdit(row: InventoryRow) {
+    setEditForm({ password: row.password, maxUsage: row.maxUsage, accountType: row.accountType, expiryDate: row.expiryDate ?? "" });
+    setEditing(row);
+  }
+  async function saveEdit() {
+    if (!editing || savingEdit) return;
+    setSavingEdit(true);
+    try {
+      const patch: Record<string, unknown> = { password: editForm.password, accountType: editForm.accountType, expiryDate: editForm.expiryDate || null };
+      if (editForm.accountType === "SHARED") patch.maxUsage = editForm.maxUsage;
+      const ok = await onUpdate(editing.id, patch);
+      if (ok) { flash("تم حفظ التعديل"); setEditing(null); }
+    } finally { setSavingEdit(false); }
+  }
+  async function toggleDisabled(row: InventoryRow) {
+    const disable = row.rawStatus !== "DISABLED";
+    const ok = await onUpdate(row.id, { status: disable ? "DISABLED" : "AVAILABLE" });
+    if (ok) flash(disable ? "تم تعطيل الحساب" : "تم تفعيل الحساب");
+  }
   return (
     <>
       <PageHead
@@ -1462,12 +1583,22 @@ function Inventory({
           </select>
           <button onClick={() => { setServiceFilter("ALL"); setStatusFilter("ALL"); setTypeFilter("ALL"); setQuery(""); }}>مسح الفلاتر</button>
         </div>
+        {selectedCount > 0 && (
+          <div className="bulkBar">
+            <span>تم تحديد {selectedCount} حساب</span>
+            <div>
+              <button onClick={() => downloadCsv("stockflow-inventory-selected.csv", [["ID","Service","Email","Type","Usage","Status","Added"], ...visibleRows.filter((row) => selectedIds.has(row.id)).map((row) => [row.id,row.service,row.account,row.type,row.usage,row.status,row.added])])}><Download size={14} /> تصدير المحدد</button>
+              <button className="danger" disabled={bulkBusy} onClick={bulkDelete}><Trash2 size={14} /> حذف المحدد</button>
+              <button onClick={() => setSelectedIds(new Set())}>إلغاء التحديد</button>
+            </div>
+          </div>
+        )}
         <div className="tableWrap">
           <table>
             <thead>
               <tr>
                 <th>
-                  <input type="checkbox" />
+                  <input type="checkbox" aria-label="تحديد الكل" checked={allVisibleSelected} onChange={toggleAll} />
                 </th>
                 <th>رقم العنصر</th>
                 <th>الخدمة</th>
@@ -1476,6 +1607,7 @@ function Inventory({
                 <th>النوع</th>
                 <th>الاستخدام</th>
                 <th>الحالة</th>
+                <th>ينتهي في</th>
                 <th>تاريخ الإضافة</th>
                 <th />
               </tr>
@@ -1484,7 +1616,7 @@ function Inventory({
               {visibleRows.map((r) => (
                 <tr key={r.id}>
                   <td>
-                    <input type="checkbox" />
+                    <input type="checkbox" aria-label={`تحديد ${r.account}`} checked={selectedIds.has(r.id)} onChange={() => toggleOne(r.id)} />
                   </td>
                   <td>
                     <b className="mono">{r.id}</b>
@@ -1503,9 +1635,15 @@ function Inventory({
                   <td>
                     <span className={`status ${r.status}`}>{r.status}</span>
                   </td>
+                  <td>{r.expiryDate ? formatArabicDate(r.expiryDate) : "—"}</td>
                   <td>{r.added}</td>
                   <td>
-                    <button className="dots" aria-label={`عرض ${r.account}`} onClick={() => setSelected(r)}>عرض</button>
+                    <div className="rowActions">
+                      <button className="dots" aria-label={`عرض ${r.account}`} onClick={() => setSelected(r)}>عرض</button>
+                      <button className="dots" aria-label={`تعديل ${r.account}`} onClick={() => openEdit(r)}><Pencil size={14} /></button>
+                      <button className="dots" aria-label={r.rawStatus === "DISABLED" ? `تفعيل ${r.account}` : `تعطيل ${r.account}`} onClick={() => toggleDisabled(r)}>{r.rawStatus === "DISABLED" ? <Power size={14} /> : <PowerOff size={14} />}</button>
+                      <button className="dots danger" aria-label={`حذف ${r.account}`} disabled={deletingId === r.id} onClick={() => handleDelete(r)}><Trash2 size={14} /></button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -1527,7 +1665,35 @@ function Inventory({
               <Credential label="مفتاح OTP" value={selected.otpKey || "غير متوفر"} />
               <Credential label="موقع استخراج OTP" value={selected.otpUrl || "غير متوفر"} link={Boolean(selected.otpUrl)} />
             </div>
-            <footer><button className="primary" onClick={() => setSelected(null)}>تم</button></footer>
+            {selected.otpKey && <div className="otpLiveRow"><LiveOtp secret={selected.otpKey} /></div>}
+            <footer><button className="danger" disabled={deletingId === selected.id} onClick={() => handleDelete(selected, true)}><Trash2 size={14} /> حذف من المخزون</button><button className="primary" onClick={() => setSelected(null)}>تم</button></footer>
+          </section>
+        </div>
+      )}
+      {editing && (
+        <div className="modalBackdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditing(null); }}>
+          <section className="accountModal">
+            <header><div><h2>تعديل الحساب</h2><p>{editing.id} — {editing.account}</p></div><button onClick={() => setEditing(null)}>×</button></header>
+            <div className="editForm">
+              <label>كلمة المرور
+                <input value={editForm.password} onChange={(event) => setEditForm({ ...editForm, password: event.target.value })} />
+              </label>
+              <label>نوع الحساب
+                <select value={editForm.accountType} onChange={(event) => setEditForm({ ...editForm, accountType: event.target.value as "INDIVIDUAL" | "SHARED" })}>
+                  <option value="INDIVIDUAL">فردي</option><option value="SHARED">مشترك</option>
+                </select>
+              </label>
+              {editForm.accountType === "SHARED" && (
+                <label>عدد مرات السحب (الحد الأقصى)
+                  <input type="number" min={Math.max(1, editing.currentUsage)} max={100} value={editForm.maxUsage} onChange={(event) => setEditForm({ ...editForm, maxUsage: Math.max(1, Math.min(100, Number(event.target.value) || 1)) })} />
+                  <small>الاستخدام الحالي: {editing.currentUsage}. لا يمكن أن يقل الحد عن الاستخدام الحالي.</small>
+                </label>
+              )}
+              <label>تاريخ انتهاء الحساب (اختياري)
+                <input type="date" value={editForm.expiryDate} onChange={(event) => setEditForm({ ...editForm, expiryDate: event.target.value })} />
+              </label>
+            </div>
+            <footer><button onClick={() => setEditing(null)}>إلغاء</button><button className="primary" disabled={savingEdit} onClick={saveEdit}>حفظ التعديل</button></footer>
           </section>
         </div>
       )}
@@ -2326,13 +2492,23 @@ function Reports() {
   const sharedCount = visible.filter((row) => row.account_type === "SHARED").length;
   const sharedPercent = visible.length ? Math.round((sharedCount / visible.length) * 100) : 0;
   const maxServiceCount = Math.max(1, ...Object.values(serviceCounts));
+  const [returningId, setReturningId] = useState<string | null>(null);
+  async function returnWithdrawal(id: string) {
+    if (returningId) return;
+    if (!window.confirm(`إرجاع العملية ${id} إلى المخزون؟ سيُعاد رصيد الحساب المستخدم وتصبح العملية مُرتجعة.`)) return;
+    setReturningId(id);
+    try {
+      const response = await fetch(`/api/withdrawals?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (response.ok) setWithdrawals((prev) => prev.map((row) => (String(row.id) === id ? { ...row, status: "RETURNED" } : row)));
+    } finally { setReturningId(null); }
+  }
   return (
     <>
       <PageHead
         title="التقارير"
         subtitle="حوّل بيانات المخزون والفريق إلى قرارات واضحة."
       >
-        <button className="primary" onClick={() => downloadCsv("stockflow-withdrawals.csv", [["ID","Employee","Customer","Phone","Contact","Service","Inventory ID","Start Date","Months","End Date","Warranty Days","Warranty End","Status","Created At"], ...visible.map((row) => [String(row.id),String(row.employee),String(row.customer_name??""),String(row.customer_phone??""),String(row.customer_contact??""),String(row.service),String(row.inventory_item_id),String(row.subscription_start_date??""),Number(row.subscription_months??0),String(row.subscription_end_date??""),Number(row.warranty_days??0),String(row.warranty_end_date??""),String(row.status),String(row.created_at)])])}><Download size={15} /> إنشاء وتصدير تقرير</button>
+        <button className="primary" onClick={() => downloadCsv("stockflow-withdrawals.csv", [["ID","Employee","Customer","Phone","Contact","Service","Inventory ID","Start Date","Months","End Date","Warranty Days","Warranty End","Selling Price","Status","Created At"], ...visible.map((row) => [String(row.id),String(row.employee),String(row.customer_name??""),String(row.customer_phone??""),String(row.customer_contact??""),String(row.service),String(row.inventory_item_id),String(row.subscription_start_date??""),Number(row.subscription_months??0),String(row.subscription_end_date??""),Number(row.warranty_days??0),String(row.warranty_end_date??""),Number(row.selling_price??0),String(row.status),String(row.created_at)])])}><Download size={15} /> إنشاء وتصدير تقرير</button>
       </PageHead>
       <div className="reportFilters panel">
         <label>
@@ -2429,6 +2605,28 @@ function Reports() {
           </div>
         </section>
       </div>
+      <section className="panel tablePanel">
+        <div className="panelHead"><h3>أحدث السحوبات</h3></div>
+        <div className="tableWrap">
+          <table>
+            <thead><tr><th>رقم العملية</th><th>الخدمة</th><th>العميل</th><th>رقم الحساب</th><th>سعر البيع</th><th>الحالة</th><th /></tr></thead>
+            <tbody>
+              {visible.slice(0, 100).map((row) => (
+                <tr key={String(row.id)}>
+                  <td className="mono">{String(row.id)}</td>
+                  <td>{String(row.service)}</td>
+                  <td>{String(row.customer_name ?? "—")}</td>
+                  <td className="mono">{String(row.inventory_item_id ?? "—")}</td>
+                  <td>{row.selling_price ? `${row.selling_price} ج.م` : "—"}</td>
+                  <td><span className="status">{String(row.status) === "COMPLETED" ? "مكتمل" : String(row.status) === "RETURNED" ? "مُرتجع" : String(row.status)}</span></td>
+                  <td>{String(row.status) === "COMPLETED" && <button className="dots danger" disabled={returningId === String(row.id)} onClick={() => returnWithdrawal(String(row.id))}><RotateCcw size={14} /> إرجاع</button>}</td>
+                </tr>
+              ))}
+              {!visible.length && <tr><td colSpan={7} className="emptyState">لا توجد سحوبات ضمن الفلاتر الحالية.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </>
   );
 }
@@ -2517,6 +2715,7 @@ function EmployeeHistory({ access }: { access: EmployeeAccessStats | null }) {
                 <th>رقم الحساب</th>
                 <th>الاشتراك</th>
                 <th>الضمان</th>
+                <th>سعر البيع</th>
                 <th>الوقت</th>
                 <th>الحالة</th>
               </tr>
@@ -2534,6 +2733,7 @@ function EmployeeHistory({ access }: { access: EmployeeAccessStats | null }) {
                   <td className="mono">{String(row.inventory_item_id)}</td>
                   <td><b>{row.subscription_months ? `${row.subscription_months} شهر` : "—"}</b><small className="tableSubtext">حتى {formatArabicDate(String(row.subscription_end_date ?? ""))}</small></td>
                   <td><b>{Number(row.warranty_days ?? 0) ? `${row.warranty_days} يوم` : "بدون"}</b><small className="tableSubtext">{row.warranty_end_date ? `حتى ${formatArabicDate(String(row.warranty_end_date))}` : ""}</small></td>
+                  <td><b>{row.selling_price ? `${row.selling_price} ج.م` : "—"}</b></td>
                   <td>{new Date(String(row.created_at)).toLocaleString("ar-EG")}</td>
                   <td>
                     <span className="status">{String(row.status) === "COMPLETED" ? "مكتمل" : String(row.status)}</span>

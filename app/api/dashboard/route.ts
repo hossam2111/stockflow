@@ -7,7 +7,7 @@ export async function GET() {
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
   const startOfMonth = new Date(startOfDay.getFullYear(), startOfDay.getMonth(), 1);
   const trendStart = new Date(startOfDay); trendStart.setDate(trendStart.getDate() - 6);
-  const [inventory,withdrawals,employees,trendRows,lowStock,topEmployees,recentActivity] = await Promise.all([
+  const [inventory,withdrawals,employees,trendRows,lowStock,topEmployees,recentActivity,revenueToday,revenueMonth,topServicesByRevenue] = await Promise.all([
     query(`SELECT COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE status='AVAILABLE' AND current_usage<max_usage)::int AS available,
       COUNT(*) FILTER (WHERE current_usage>0)::int AS used FROM inventory_items WHERE organization_id=$1`,[context.organizationId]),
@@ -30,6 +30,13 @@ export async function GET() {
       FROM withdrawals w JOIN users u ON u.id=w.user_id JOIN services s ON s.id=w.service_id
       WHERE w.organization_id=$1 AND w.status='COMPLETED'
       ORDER BY w.created_at DESC LIMIT 4`,[context.organizationId]),
+    query("SELECT COALESCE(SUM(selling_price),0)::int AS revenue FROM withdrawals WHERE organization_id=$1 AND status='COMPLETED' AND created_at >= $2",[context.organizationId,startOfDay]),
+    query("SELECT COALESCE(SUM(selling_price),0)::int AS revenue FROM withdrawals WHERE organization_id=$1 AND status='COMPLETED' AND created_at >= $2",[context.organizationId,startOfMonth]),
+    query(`SELECT s.name,COALESCE(SUM(w.selling_price),0)::int AS revenue
+      FROM withdrawals w JOIN services s ON s.id=w.service_id
+      WHERE w.organization_id=$1 AND w.status='COMPLETED' AND w.created_at>=$2
+      GROUP BY s.name HAVING COALESCE(SUM(w.selling_price),0)>0
+      ORDER BY revenue DESC LIMIT 4`,[context.organizationId,startOfMonth]),
   ]);
   const counts = new Map(trendRows.rows.map((row) => [String(row.day),Number(row.count)]));
   const withdrawalTrend = Array.from({length:7},(_,index) => {
@@ -40,5 +47,7 @@ export async function GET() {
   return NextResponse.json({
     inventory:inventory.rows[0],withdrawalsToday:withdrawals.rows[0]?.today ?? 0,employees:employees.rows[0],
     withdrawalTrend,lowStock:lowStock.rows,topEmployees:topEmployees.rows,recentActivity:recentActivity.rows,
+    revenue:{today:revenueToday.rows[0]?.revenue ?? 0,month:revenueMonth.rows[0]?.revenue ?? 0},
+    topServicesByRevenue:topServicesByRevenue.rows,
   });
 }

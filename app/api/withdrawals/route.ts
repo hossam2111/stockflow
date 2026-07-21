@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isMemoryDatabase, transaction } from "@/lib/db";
 import { z } from "zod";
-import { getWorkspaceContext } from "@/lib/auth";
+import { getWorkspaceContext, requireWorkspaceAdmin } from "@/lib/auth";
 
 const schema = z.object({
   employeeId:z.string().default("omar"),
@@ -16,6 +16,7 @@ const schema = z.object({
   subscriptionMonths:z.number().int().min(1).max(24),
   warrantyDays:z.number().int().min(0).max(730),
   quantity:z.number().int().min(1).max(20).default(1),
+  sellingPrice:z.number().min(0).optional().default(0),
 });
 
 function parseDate(value:string){
@@ -36,7 +37,9 @@ export async function POST(request: Request) {
   const context=await getWorkspaceContext();if(!context?.organizationId)return NextResponse.json({error:"UNAUTHORIZED"},{status:401});const session=context.session;
   const parsed=schema.safeParse(await request.json());
   if(!parsed.success)return NextResponse.json({error:"INVALID_INPUT"},{status:400});
-  if(session.role==="EMPLOYEE")parsed.data.employeeId=session.id;
+  // The withdrawal is always recorded under the logged-in account (admin or employee); there is no
+  // "withdraw on behalf of another employee" picker yet, so never trust a client-supplied employeeId.
+  parsed.data.employeeId=session.id;
   try {
     const subscriptionStart=parseDate(parsed.data.subscriptionStartDate);
     const subscriptionEnd=addMonths(subscriptionStart,parsed.data.subscriptionMonths);
@@ -46,20 +49,28 @@ export async function POST(request: Request) {
     const result=await transaction(async client=>{
       const existing=await client.query("SELECT id,status,inventory_item_id FROM withdrawals WHERE idempotency_key=$1",[parsed.data.idempotencyKey]);
       if(existing.rows[0])return {duplicate:true,withdrawal:existing.rows[0]};
-      const userResult=await client.query("SELECT id,active,daily_limit FROM users WHERE id=$1 AND organization_id=$2 FOR UPDATE",[parsed.data.employeeId,context.organizationId]);
-      const user=userResult.rows[0];
-      if(!user)throw new Error("EMPLOYEE_NOT_FOUND");
-      if(!user.active)throw new Error("EMPLOYEE_DISABLED");
-      const permissionResult=await client.query(`SELECT enabled,daily_limit FROM employee_service_permissions WHERE user_id=$1 AND service_id=$2`,[parsed.data.employeeId,parsed.data.serviceId]);
-      const permission=permissionResult.rows[0];
-      if(!permission?.enabled)throw new Error("SERVICE_NOT_ALLOWED");
       const startOfDay=new Date(); startOfDay.setHours(0,0,0,0);
-      const totalUsageResult=await client.query(`SELECT COUNT(*)::int AS total
-        FROM withdrawals WHERE user_id=$1 AND status='COMPLETED' AND created_at>=$2`,[parsed.data.employeeId,startOfDay]);
-      const serviceUsageResult=await client.query(`SELECT COUNT(*)::int AS total
-        FROM withdrawals WHERE user_id=$1 AND service_id=$2 AND status='COMPLETED' AND created_at>=$3`,[parsed.data.employeeId,parsed.data.serviceId,startOfDay]);
-      if(totalUsageResult.rows[0].total+parsed.data.quantity>user.daily_limit)throw new Error("DAILY_LIMIT_REACHED");
-      if(serviceUsageResult.rows[0].total+parsed.data.quantity>permission.daily_limit)throw new Error("SERVICE_LIMIT_REACHED");
+      // Authorization by role:
+      //  - super admin: absolute withdrawal — no org-membership, permission or limit checks (their user row has org=NULL).
+      //  - org admin: withdraws in their own org without needing a per-service permission, bound only by their own daily limit.
+      //  - employee: must have the service enabled and is bound by both the per-service and the overall daily limit.
+      if(!session.isSuperAdmin){
+        const userResult=await client.query("SELECT id,active,daily_limit,role FROM users WHERE id=$1 AND organization_id=$2 FOR UPDATE",[parsed.data.employeeId,context.organizationId]);
+        const user=userResult.rows[0];
+        if(!user)throw new Error("EMPLOYEE_NOT_FOUND");
+        if(!user.active)throw new Error("EMPLOYEE_DISABLED");
+        if(user.role!=="ADMIN"){
+          const permissionResult=await client.query(`SELECT enabled,daily_limit FROM employee_service_permissions WHERE user_id=$1 AND service_id=$2`,[parsed.data.employeeId,parsed.data.serviceId]);
+          const permission=permissionResult.rows[0];
+          if(!permission?.enabled)throw new Error("SERVICE_NOT_ALLOWED");
+          const serviceUsageResult=await client.query(`SELECT COUNT(*)::int AS total
+            FROM withdrawals WHERE user_id=$1 AND service_id=$2 AND status='COMPLETED' AND created_at>=$3`,[parsed.data.employeeId,parsed.data.serviceId,startOfDay]);
+          if(serviceUsageResult.rows[0].total+parsed.data.quantity>permission.daily_limit)throw new Error("SERVICE_LIMIT_REACHED");
+        }
+        const totalUsageResult=await client.query(`SELECT COUNT(*)::int AS total
+          FROM withdrawals WHERE user_id=$1 AND status='COMPLETED' AND created_at>=$2`,[parsed.data.employeeId,startOfDay]);
+        if(totalUsageResult.rows[0].total+parsed.data.quantity>user.daily_limit)throw new Error("DAILY_LIMIT_REACHED");
+      }
       const lock=isMemoryDatabase()?"":"FOR UPDATE SKIP LOCKED";
       const batchId=`BATCH-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
       const allocatedIds:string[]=[];
@@ -71,6 +82,7 @@ export async function POST(request: Request) {
         customerName:string;customerPhone:string;customerContact:string;customerReference:string;customerNotes:string;
         subscriptionStartDate:string;subscriptionMonths:number;subscriptionEndDate:string;
         warrantyDays:number;warrantyEndDate:string|null;
+        sellingPrice?:number;
       }>();
       for(let index=0;index<parsed.data.quantity;index++){
         const inventoryResult=await client.query(`SELECT * FROM inventory_items WHERE organization_id=$1 AND service_id=$2
@@ -85,11 +97,12 @@ export async function POST(request: Request) {
         await client.query(`INSERT INTO withdrawals(
           id,organization_id,user_id,service_id,inventory_item_id,status,idempotency_key,previous_usage,new_usage,batch_id,batch_quantity,
           customer_name,customer_phone,customer_contact,customer_reference,customer_notes,
-          subscription_start_date,subscription_months,subscription_end_date,warranty_days,warranty_end_date)
-          VALUES ($1,$2,$3,$4,$5,'COMPLETED',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,[
+          subscription_start_date,subscription_months,subscription_end_date,warranty_days,warranty_end_date,selling_price)
+          VALUES ($1,$2,$3,$4,$5,'COMPLETED',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,[
           withdrawalId,context.organizationId,parsed.data.employeeId,parsed.data.serviceId,item.id,itemIdempotencyKey,item.current_usage,item.current_usage+1,batchId,parsed.data.quantity,
           parsed.data.customerName,parsed.data.customerPhone||null,parsed.data.customerContact||null,parsed.data.customerReference||null,parsed.data.customerNotes||null,
           dateOnly(subscriptionStart),parsed.data.subscriptionMonths,dateOnly(subscriptionEnd),parsed.data.warrantyDays,warrantyEnd?dateOnly(warrantyEnd):null,
+          parsed.data.sellingPrice,
         ]);
         const existingCredential=credentialMap.get(item.id);
         if(existingCredential){
@@ -107,6 +120,7 @@ export async function POST(request: Request) {
             subscriptionStartDate:dateOnly(subscriptionStart),subscriptionMonths:parsed.data.subscriptionMonths,
             subscriptionEndDate:dateOnly(subscriptionEnd),warrantyDays:parsed.data.warrantyDays,
             warrantyEndDate:warrantyEnd?dateOnly(warrantyEnd):null,
+            sellingPrice:parsed.data.sellingPrice,
           });
         }
       }
@@ -121,6 +135,8 @@ export async function POST(request: Request) {
     return NextResponse.json(result,{status:result.duplicate?200:201});
   } catch(error) {
     const code=error instanceof Error?error.message:"WITHDRAWAL_FAILED";
+    const known=["EMPLOYEE_DISABLED","EMPLOYEE_NOT_FOUND","SERVICE_NOT_ALLOWED","DAILY_LIMIT_REACHED","SERVICE_LIMIT_REACHED","OUT_OF_STOCK","INVENTORY_CONFLICT","INVALID_DATE"];
+    if(!known.includes(code))console.error("[withdrawals] unexpected failure:",error);
     const status=["EMPLOYEE_DISABLED","SERVICE_NOT_ALLOWED","DAILY_LIMIT_REACHED","SERVICE_LIMIT_REACHED"].includes(code)?403:code==="OUT_OF_STOCK"?409:400;
     return NextResponse.json({error:code},{status});
   }
@@ -132,11 +148,39 @@ export async function GET(request:Request){
   const employeeId=session.role==="EMPLOYEE"?session.id:requested;
   const base=`SELECT w.id,w.user_id,w.status,w.created_at,s.name AS service,w.inventory_item_id,u.name AS employee,i.account_type,
     w.customer_name,w.customer_phone,w.customer_contact,w.customer_reference,w.customer_notes,
-    w.subscription_start_date,w.subscription_months,w.subscription_end_date,w.warranty_days,w.warranty_end_date
+    w.subscription_start_date,w.subscription_months,w.subscription_end_date,w.warranty_days,w.warranty_end_date,w.selling_price
     FROM withdrawals w JOIN services s ON s.id=w.service_id JOIN users u ON u.id=w.user_id
     JOIN inventory_items i ON i.id=w.inventory_item_id`;
   const result=employeeId
     ? await (await import("@/lib/db")).query(`${base} WHERE w.organization_id=$1 AND w.user_id=$2 ORDER BY w.created_at DESC LIMIT 1000`,[context.organizationId,employeeId])
     : await (await import("@/lib/db")).query(`${base} WHERE w.organization_id=$1 ORDER BY w.created_at DESC LIMIT 1000`,[context.organizationId]);
   return NextResponse.json({withdrawals:result.rows});
+}
+
+export async function DELETE(request:Request){
+  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
+  const id=new URL(request.url).searchParams.get("id");
+  if(!id)return NextResponse.json({error:"INVALID_INPUT"},{status:400});
+  try {
+    const returned=await transaction(async client=>{
+      const withdrawalResult=await client.query("SELECT id,status,inventory_item_id FROM withdrawals WHERE id=$1 AND organization_id=$2 FOR UPDATE",[id,context.organizationId]);
+      const withdrawal=withdrawalResult.rows[0];if(!withdrawal)throw new Error("NOT_FOUND");
+      if(withdrawal.status!=="COMPLETED")throw new Error("ALREADY_RETURNED");
+      if(withdrawal.inventory_item_id!=null){
+        await client.query("SELECT id,max_usage,status FROM inventory_items WHERE id=$1 FOR UPDATE",[withdrawal.inventory_item_id]);
+        await client.query("UPDATE inventory_items SET current_usage=GREATEST(0,current_usage-1),status=CASE WHEN status='DISABLED' THEN 'DISABLED' WHEN GREATEST(0,current_usage-1)>=max_usage THEN 'FULL' ELSE 'AVAILABLE' END WHERE id=$1",[withdrawal.inventory_item_id]);
+      }
+      await client.query("UPDATE withdrawals SET status='RETURNED' WHERE id=$1",[withdrawal.id]);
+      await client.query(`INSERT INTO activity_logs(id,organization_id,actor_id,action,entity_type,entity_id,metadata) VALUES ($1,$2,$3,'WITHDRAWAL_RETURN','WITHDRAWAL_BATCH',$4,$5)`,
+        [crypto.randomUUID(),context.organizationId,context.session.id,withdrawal.id,JSON.stringify({inventoryItemId:withdrawal.inventory_item_id})]);
+      return withdrawal.id;
+    });
+    return NextResponse.json({returned:returned});
+  } catch(error) {
+    const code=error instanceof Error?error.message:"WITHDRAWAL_RETURN_FAILED";
+    const known=["NOT_FOUND","ALREADY_RETURNED"];
+    if(!known.includes(code))console.error("[withdrawals] unexpected return failure:",error);
+    const status=code==="NOT_FOUND"?404:code==="ALREADY_RETURNED"?409:400;
+    return NextResponse.json({error:code},{status});
+  }
 }

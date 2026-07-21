@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { query } from "@/lib/db";
+import { query, transaction } from "@/lib/db";
 import { z } from "zod";
 import { requireWorkspaceAdmin } from "@/lib/auth";
 
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
     filters.push(`(LOWER(i.email) LIKE LOWER($${values.length}) OR LOWER(i.id) LIKE LOWER($${values.length}))`);
   }
   const result = await query(`SELECT i.id,i.service_id,s.name AS service,i.email,i.password,i.otp_secret,i.otp_url,
-    i.account_type,i.max_usage,i.current_usage,i.status,i.created_at,
+    i.account_type,i.max_usage,i.current_usage,i.status,i.expiry_date,i.created_at,
     (i.otp_secret IS NOT NULL) AS otp_ready FROM inventory_items i JOIN services s ON s.id=i.service_id
     WHERE ${filters.join(" AND ")}
     ORDER BY i.created_at DESC LIMIT 200`, values);
@@ -57,4 +57,79 @@ export async function POST(request: Request) {
     JSON.stringify({ requested: rows.data.length,accepted:acceptedRows.length,inserted,duplicates }),
   ]);
   return NextResponse.json({ inserted, duplicates }, { status:201 });
+}
+
+const patchSchema = z.object({
+  password: z.string().min(1).optional(), otpSecret: z.string().optional().nullable(), otpUrl: z.string().url().optional().nullable(),
+  maxUsage: z.number().int().min(1).max(100).optional(), accountType: z.enum(["INDIVIDUAL","SHARED"]).optional(),
+  status: z.enum(["AVAILABLE","DISABLED"]).optional(), expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+});
+
+export async function PATCH(request: Request) {
+  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
+  const id=new URL(request.url).searchParams.get("id");
+  if(!id)return NextResponse.json({error:"INVALID_INPUT"},{status:400});
+  const body=await request.json().catch(()=>({}));const parsed=patchSchema.safeParse(body);
+  if(!parsed.success)return NextResponse.json({error:"INVALID_INPUT",details:parsed.error.flatten()},{status:400});
+  const data=parsed.data;
+  if(Object.values(data).every(v=>v===undefined))return NextResponse.json({error:"INVALID_INPUT"},{status:400});
+  try {
+    const item=await transaction(async client=>{
+      const current=await client.query<{max_usage:number;current_usage:number;status:string}>("SELECT * FROM inventory_items WHERE id=$1 AND organization_id=$2 FOR UPDATE",[id,context.organizationId]);
+      if(!current.rows[0])throw new Error("NOT_FOUND");
+      const row=current.rows[0];
+      let effectiveMax=data.maxUsage??row.max_usage;
+      if(data.accountType==="INDIVIDUAL")effectiveMax=1;
+      let newStatus=row.status;
+      if(data.status==="DISABLED")newStatus="DISABLED";
+      else if(data.status==="AVAILABLE")newStatus=row.current_usage>=effectiveMax?"FULL":"AVAILABLE";
+      else if(data.maxUsage!==undefined&&row.status!=="DISABLED")newStatus=row.current_usage>=effectiveMax?"FULL":"AVAILABLE";
+      const sets:string[]=[];const vals:unknown[]=[];const changed:Record<string,unknown>={};
+      const push=(col:string,val:unknown)=>{vals.push(val);sets.push(`${col}=$${vals.length}`);};
+      if(data.password!==undefined){push("password",data.password);changed.password=true;}
+      if(data.otpSecret!==undefined){push("otp_secret",data.otpSecret);changed.otpSecret=data.otpSecret;}
+      if(data.otpUrl!==undefined){push("otp_url",data.otpUrl);changed.otpUrl=data.otpUrl;}
+      if(data.accountType!==undefined){push("account_type",data.accountType);changed.accountType=data.accountType;}
+      if(data.maxUsage!==undefined||data.accountType!==undefined){push("max_usage",effectiveMax);changed.maxUsage=effectiveMax;}
+      if(data.expiryDate!==undefined){push("expiry_date",data.expiryDate);changed.expiryDate=data.expiryDate;}
+      if(data.status!==undefined||(data.maxUsage!==undefined&&row.status!=="DISABLED")){push("status",newStatus);changed.status=newStatus;}
+      vals.push(id);const idIdx=vals.length;vals.push(context.organizationId);const orgIdx=vals.length;
+      const updated=await client.query(`UPDATE inventory_items SET ${sets.join(",")} WHERE id=$${idIdx} AND organization_id=$${orgIdx} RETURNING *`,vals);
+      await client.query(`INSERT INTO activity_logs(id,organization_id,actor_id,action,entity_type,entity_id,metadata)
+        VALUES ($1,$2,$3,'INVENTORY_UPDATE','INVENTORY',$4,$5)`,[crypto.randomUUID(),context.organizationId,context.session.id,id,JSON.stringify(changed)]);
+      return updated.rows[0];
+    });
+    return NextResponse.json({item});
+  } catch(error) {
+    const code=error instanceof Error?error.message:"UPDATE_FAILED";
+    const status=code==="NOT_FOUND"?404:400;
+    return NextResponse.json({error:code},{status});
+  }
+}
+
+export async function DELETE(request: Request) {
+  // requireWorkspaceAdmin resolves to the caller's own organization for an org admin, or to the
+  // super admin's currently selected organization. Scoping every query to context.organizationId is
+  // what enforces the hierarchy: an org admin can only ever touch their own workspace's inventory,
+  // while the super admin manages whichever organization they have switched into.
+  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
+  const id=new URL(request.url).searchParams.get("id");
+  if(!id)return NextResponse.json({error:"INVALID_INPUT"},{status:400});
+  try {
+    const result=await transaction(async client=>{
+      const item=await client.query("SELECT id FROM inventory_items WHERE id=$1 AND organization_id=$2 FOR UPDATE",[id,context.organizationId]);
+      if(!item.rows[0])throw new Error("NOT_FOUND");
+      const used=await client.query("SELECT 1 FROM withdrawals WHERE inventory_item_id=$1 LIMIT 1",[id]);
+      if(used.rows[0])throw new Error("ITEM_HAS_HISTORY");
+      await client.query("DELETE FROM inventory_items WHERE id=$1 AND organization_id=$2",[id,context.organizationId]);
+      await client.query(`INSERT INTO activity_logs(id,organization_id,actor_id,action,entity_type,entity_id,metadata)
+        VALUES ($1,$2,$3,'INVENTORY_DELETE','INVENTORY',$4,'{}')`,[crypto.randomUUID(),context.organizationId,context.session.id,id]);
+      return id;
+    });
+    return NextResponse.json({deleted:result});
+  } catch(error) {
+    const code=error instanceof Error?error.message:"DELETE_FAILED";
+    const status=code==="NOT_FOUND"?404:code==="ITEM_HAS_HISTORY"?409:400;
+    return NextResponse.json({error:code},{status});
+  }
 }
