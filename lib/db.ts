@@ -107,13 +107,13 @@ export async function ensureDb() {
       const pool = getPool();
       for (const statement of schema) await pool.query(statement);
       
-      const adminHash = await bcrypt.hash("admin123", 10);
-      const companyAdminHash = await bcrypt.hash("Company@123", 10);
-      const omarHash = await bcrypt.hash("Omar@123", 10);
-      const youssefHash = await bcrypt.hash("Youssef@123", 10);
-      const fatimaHash = await bcrypt.hash("Fatima@123", 10);
-      const innovateAdminHash = await bcrypt.hash("Innovate@123", 10);
-      const khaledHash = await bcrypt.hash("Khaled@123", 10);
+      const adminHash = "$2b$10$Iok1m2/UFhOaM0.2NLatHOvmC5B9MC8vYDH26VehJvyJTKBWNHOYS";
+      const companyAdminHash = "$2b$10$MopCftE/MgmAy1sjFSgVCOxdg6lnCNH2DR0kNZcn11pH9kdKF6H6i";
+      const omarHash = "$2b$10$Lgg6TULfK1glxZNBcuN6lumC0nzYC2v1zrlACz1T5efjnifN0nKHG";
+      const youssefHash = "$2b$10$GEh3cNecGpEdaHtHNqmnOeZpuDNBJNuD34UJUgtiMFxdDjn0P.CBy";
+      const fatimaHash = "$2b$10$dHIAinO80QBwV7VGRiZ.1ebJ1mjcFM15ipQYXTnnMrWOnnpFeRA5y";
+      const innovateAdminHash = "$2b$10$xHyJnAA1hCPF25KBIZQmb.DywmU3DMKBY/SjvwOAHNzQeLLWouFem";
+      const khaledHash = "$2b$10$YG4VOyrHoaNqIBEo8zA02.QeE0BP4Thzt9p3buLWLPi7FR/3hY7y2";
 
       // Organizations
       await pool.query(`INSERT INTO organizations(id,name,slug,plan,employee_limit,inventory_limit)
