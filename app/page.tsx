@@ -694,14 +694,13 @@ function Login({ onLogin }: { onLogin: (user: CurrentUser) => void }) {
           <p>أدخل بيانات الحساب التي أنشأها لك مسؤول النظام.</p>
           <label>
             البريد الإلكتروني
-            <input type="email" defaultValue="admin@stockflow.io" required />
+            <input type="email" required />
           </label>
           <label>
             كلمة المرور
             <div className="password">
               <input
                 type={show ? "text" : "password"}
-                  defaultValue="admin123"
                   data-password
                 required
               />
