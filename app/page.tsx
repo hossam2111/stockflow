@@ -684,7 +684,7 @@ function Login({ onLogin }: { onLogin: (user: CurrentUser) => void }) {
         <small>بياناتك مشفرة ومحمية بمعايير أمان متقدمة</small>
       </section>
       <section className="loginForm">
-        <form onSubmit={submit}>
+        <form onSubmit={submit} autoComplete="off">
           <div className="mobileBrand">
             <div className="brandmark">S</div>
             <b>StockFlow</b>
@@ -694,7 +694,7 @@ function Login({ onLogin }: { onLogin: (user: CurrentUser) => void }) {
           <p>أدخل بيانات الحساب التي أنشأها لك مسؤول النظام.</p>
           <label>
             البريد الإلكتروني
-            <input type="email" required />
+            <input type="email" autoComplete="off" required />
           </label>
           <label>
             كلمة المرور
@@ -702,6 +702,7 @@ function Login({ onLogin }: { onLogin: (user: CurrentUser) => void }) {
               <input
                 type={show ? "text" : "password"}
                   data-password
+                  autoComplete="new-password"
                 required
               />
               <button type="button" onClick={() => setShow(!show)}>
