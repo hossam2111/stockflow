@@ -1103,6 +1103,13 @@ td b {
   gap: 6px;
   align-items: center;
 }
+.editForm { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 20px 22px; }
+.editForm .editField { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 700; color: var(--text); }
+.editForm .editField.wide { grid-column: 1 / -1; }
+.editForm .editField input, .editForm .editField select { width: 100%; height: 40px; border: 1px solid var(--line); border-radius: 9px; padding: 0 11px; background: var(--card); color: var(--text); font: inherit; outline: none; }
+.editForm .editField input:focus, .editForm .editField select:focus { border-color: #2563eb; box-shadow: 0 0 0 3px #2563eb1f; }
+.editForm .editField input:disabled { background: var(--bg); color: var(--muted); cursor: not-allowed; }
+@media (max-width: 620px) { .editForm { grid-template-columns: 1fr; } }
 .costEditor { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .costEditor input { width: 74px; border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 8px; padding: 5px 8px; font: inherit; }
 .costEditor button { border: 1px solid #2563eb; background: #2563eb; color: #fff; border-radius: 8px; padding: 5px 10px; font: inherit; font-size: 11px; cursor: pointer; }

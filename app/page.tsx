@@ -1486,17 +1486,17 @@ function Inventory({
     }
   }
   const [editing, setEditing] = useState<InventoryRow | null>(null);
-  const [editForm, setEditForm] = useState({ password: "", maxUsage: 1, accountType: "INDIVIDUAL" as "INDIVIDUAL" | "SHARED", expiryDate: "" });
+  const [editForm, setEditForm] = useState({ password: "", otpSecret: "", otpUrl: "", maxUsage: 1, accountType: "INDIVIDUAL" as "INDIVIDUAL" | "SHARED", expiryDate: "" });
   const [savingEdit, setSavingEdit] = useState(false);
   function openEdit(row: InventoryRow) {
-    setEditForm({ password: row.password, maxUsage: row.maxUsage, accountType: row.accountType, expiryDate: row.expiryDate ?? "" });
+    setEditForm({ password: row.password, otpSecret: row.otpKey, otpUrl: row.otpUrl, maxUsage: row.maxUsage, accountType: row.accountType, expiryDate: row.expiryDate ?? "" });
     setEditing(row);
   }
   async function saveEdit() {
     if (!editing || savingEdit) return;
     setSavingEdit(true);
     try {
-      const patch: Record<string, unknown> = { password: editForm.password, accountType: editForm.accountType, expiryDate: editForm.expiryDate || null };
+      const patch: Record<string, unknown> = { password: editForm.password, accountType: editForm.accountType, expiryDate: editForm.expiryDate || null, otpSecret: editForm.otpSecret || null, otpUrl: editForm.otpUrl || null };
       if (editForm.accountType === "SHARED") patch.maxUsage = editForm.maxUsage;
       const ok = await onUpdate(editing.id, patch);
       if (ok) { flash("تم حفظ التعديل"); setEditing(null); }
@@ -1666,22 +1666,36 @@ function Inventory({
           <section className="accountModal">
             <header><div><h2>تعديل الحساب</h2><p>{editing.id} — {editing.account}</p></div><button onClick={() => setEditing(null)}>×</button></header>
             <div className="editForm">
-              <label>كلمة المرور
-                <input value={editForm.password} onChange={(event) => setEditForm({ ...editForm, password: event.target.value })} />
+              <label className="editField wide">الإيميل (لا يمكن تعديله)
+                <input value={editing.account} readOnly disabled dir="ltr" />
               </label>
-              <label>نوع الحساب
+              <label className="editField wide">كلمة المرور
+                <input value={editForm.password} onChange={(event) => setEditForm({ ...editForm, password: event.target.value })} dir="ltr" />
+              </label>
+              <label className="editField">نوع الحساب
                 <select value={editForm.accountType} onChange={(event) => setEditForm({ ...editForm, accountType: event.target.value as "INDIVIDUAL" | "SHARED" })}>
                   <option value="INDIVIDUAL">فردي</option><option value="SHARED">مشترك</option>
                 </select>
               </label>
-              {editForm.accountType === "SHARED" && (
-                <label>عدد مرات السحب (الحد الأقصى)
+              {editForm.accountType === "SHARED" ? (
+                <label className="editField">عدد مرات السحب (السعة)
                   <input type="number" min={Math.max(1, editing.currentUsage)} max={100} value={editForm.maxUsage} onChange={(event) => setEditForm({ ...editForm, maxUsage: Math.max(1, Math.min(100, Number(event.target.value) || 1)) })} />
-                  <small>الاستخدام الحالي: {editing.currentUsage}. لا يمكن أن يقل الحد عن الاستخدام الحالي.</small>
+                </label>
+              ) : (
+                <label className="editField">تاريخ انتهاء الحساب (اختياري)
+                  <input type="date" value={editForm.expiryDate} onChange={(event) => setEditForm({ ...editForm, expiryDate: event.target.value })} />
                 </label>
               )}
-              <label>تاريخ انتهاء الحساب (اختياري)
-                <input type="date" value={editForm.expiryDate} onChange={(event) => setEditForm({ ...editForm, expiryDate: event.target.value })} />
+              {editForm.accountType === "SHARED" && (
+                <label className="editField">تاريخ انتهاء الحساب (اختياري)
+                  <input type="date" value={editForm.expiryDate} onChange={(event) => setEditForm({ ...editForm, expiryDate: event.target.value })} />
+                </label>
+              )}
+              <label className="editField">مفتاح OTP (اختياري)
+                <input value={editForm.otpSecret} onChange={(event) => setEditForm({ ...editForm, otpSecret: event.target.value })} dir="ltr" placeholder="JBSWY3DPEHPK3PXP" />
+              </label>
+              <label className="editField wide">رابط استخراج OTP (اختياري)
+                <input value={editForm.otpUrl} onChange={(event) => setEditForm({ ...editForm, otpUrl: event.target.value })} dir="ltr" placeholder="https://2fa.live" />
               </label>
             </div>
             <footer><button onClick={() => setEditing(null)}>إلغاء</button><button className="primary" disabled={savingEdit} onClick={saveEdit}>حفظ التعديل</button></footer>
@@ -2537,12 +2551,6 @@ function Reports() {
       </PageHead>
       <PeriodFilter preset={preset} setPreset={setPreset} custom={custom} setCustom={setCustom} />
       <div className="reportFilters panel">
-        <label>
-          الفترة الزمنية
-          <select defaultValue="30">
-            <option value="30">آخر 30 يومًا</option>
-          </select>
-        </label>
         <label>
           الخدمة
           <select value={serviceFilter} onChange={(event) => setServiceFilter(event.target.value)}>
