@@ -223,7 +223,13 @@ const serviceOrder = new Map(services.map((service, index) => [service.name, ind
 const serviceRank = (name: string) => serviceOrder.get(name) ?? Number.MAX_SAFE_INTEGER;
 
 function downloadCsv(filename: string, rows: (string | number | boolean | null | undefined)[][]) {
-  const csv = rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n");
+  const safeCell = (value: string | number | boolean | null | undefined) => {
+    const text = String(value ?? "");
+    const excelSafe = /^[=+\-@]/.test(text) ? `'${text}` : text;
+    return `"${excelSafe.replaceAll('"', '""')}"`;
+  };
+  // UTF-8 BOM preserves Arabic, and Excel's sep directive overrides Windows locale delimiters.
+  const csv = `sep=,\r\n${rows.map((row) => row.map(safeCell).join(",")).join("\r\n")}`;
   const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
   const link = document.createElement("a");
   link.href = url;
@@ -2561,7 +2567,15 @@ function Reports() {
         title="التقارير"
         subtitle="حوّل بيانات المخزون والفريق إلى قرارات واضحة."
       >
-        <button className="primary" onClick={() => downloadCsv("stockflow-withdrawals.csv", [["ID","Employee","Customer","Phone","Contact","Service","Inventory ID","Start Date","Months","End Date","Warranty Days","Warranty End","Selling Price","Paid","Remaining","Status","Created At"], ...visible.map((row) => [String(row.id),String(row.employee),String(row.customer_name??""),String(row.customer_phone??""),String(row.customer_contact??""),String(row.service),String(row.inventory_item_id),String(row.subscription_start_date??""),Number(row.subscription_months??0),String(row.subscription_end_date??""),Number(row.warranty_days??0),String(row.warranty_end_date??""),Number(row.selling_price??0),Number(row.paid_amount??0),Number(row.remaining??0),String(row.status),String(row.created_at)])])}><Download size={15} /> إنشاء وتصدير تقرير</button>
+        <button className="primary" onClick={() => downloadCsv("stockflow-withdrawals-full.csv", [[
+          "رقم العملية", "رقم الدفعة", "الموظف", "الخدمة", "رقم المخزون", "نوع الحساب", "إيميل الحساب", "كلمة مرور الحساب", "مفتاح OTP", "رابط OTP",
+          "اسم العميل", "هاتف العميل", "وسيلة التواصل", "مرجع العميل", "ملاحظات العميل", "بداية الاشتراك", "عدد الشهور", "نهاية الاشتراك", "أيام الضمان", "نهاية الضمان",
+          "سعر البيع", "التكلفة", "المدفوع", "المتبقي", "الاستخدام قبل السحب", "الاستخدام بعد السحب", "حالة العملية", "تاريخ السحب"
+        ], ...visible.map((row) => [
+          String(row.id), String(row.batch_id ?? ""), String(row.employee ?? ""), String(row.service ?? ""), String(row.inventory_item_id ?? ""), String(row.account_type ?? ""), String(row.account_email ?? ""), String(row.account_password ?? ""), String(row.otp_secret ?? ""), String(row.otp_url ?? ""),
+          String(row.customer_name ?? ""), String(row.customer_phone ?? ""), String(row.customer_contact ?? ""), String(row.customer_reference ?? ""), String(row.customer_notes ?? ""), String(row.subscription_start_date ?? ""), Number(row.subscription_months ?? 0), String(row.subscription_end_date ?? ""), Number(row.warranty_days ?? 0), String(row.warranty_end_date ?? ""),
+          Number(row.selling_price ?? 0), Number(row.cost ?? 0), Number(row.paid_amount ?? 0), Number(row.remaining ?? 0), Number(row.previous_usage ?? 0), Number(row.new_usage ?? 0), String(row.status ?? ""), String(row.created_at ?? "")
+        ])])}><Download size={15} /> تصدير التقرير الكامل</button>
       </PageHead>
       <PeriodFilter preset={preset} setPreset={setPreset} custom={custom} setCustom={setCustom} />
       <div className="reportFilters panel">
@@ -3054,7 +3068,7 @@ function Settings({
   const [activeTab, setActiveTab] = useState("عام");
   const [systemName, setSystemName] = useState("StockFlow");
   const [fifo, setFifo] = useState(true);
-  const tabs = ["عام", "التخصيص والسحب", "الحدود", "الأمان", "الإشعارات", "النسخ الاحتياطي"];
+  const tabs = ["عام", "الذكاء الاصطناعي", "التخصيص والسحب", "الحدود", "الأمان", "الإشعارات", "النسخ الاحتياطي"];
   function saveSettings() {
     localStorage.setItem("stockflow-settings", JSON.stringify({ systemName, fifo, dark }));
     flash("تم حفظ الإعدادات على هذا الجهاز");
@@ -3070,7 +3084,7 @@ function Settings({
         <aside className="panel settingsNav">
           {tabs.map((tab) => <button key={tab} className={activeTab === tab ? "active" : ""} onClick={() => setActiveTab(tab)}>{tab}</button>)}
         </aside>
-        <section className="panel settingsForm">
+        {activeTab === "الذكاء الاصطناعي" ? <AiConnectionSettings flash={flash} /> : <section className="panel settingsForm">
           <h3>إعدادات {activeTab}</h3>
           <p>اضبط خيارات {activeTab} ثم اضغط حفظ التغييرات.</p>
           <hr />
@@ -3129,8 +3143,95 @@ function Settings({
               حفظ التغييرات
             </button>
           </footer>
-        </section>
+        </section>}
       </div>
     </>
+  );
+}
+
+type AiConnectionStatus = {
+  connected: boolean;
+  connection: null | { provider: string; keyHint: string; model: string; enabled: boolean; updatedAt: string };
+};
+
+function AiConnectionSettings({ flash }: { flash: (message: string) => void }) {
+  const [status, setStatus] = useState<AiConnectionStatus | null>(null);
+  const [apiKey, setApiKey] = useState("");
+  const [model, setModel] = useState("gpt-5.6-terra");
+  const [showKey, setShowKey] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadStatus = useCallback(async () => {
+    const response = await fetch("/api/ai-connection", { cache: "no-store" });
+    if (response.ok) {
+      const data = await response.json() as AiConnectionStatus;
+      setStatus(data);
+      if (data.connection?.model) setModel(data.connection.model);
+    }
+  }, []);
+  useEffect(() => {
+    let active = true;
+    fetch("/api/ai-connection", { cache: "no-store" })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data: AiConnectionStatus) => {
+        if (!active) return;
+        setStatus(data);
+        if (data.connection?.model) setModel(data.connection.model);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  async function connect() {
+    if (!apiKey.trim()) { setError("أدخل مفتاح OpenAI API أولًا."); return; }
+    setBusy(true); setError("");
+    const response = await fetch("/api/ai-connection", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: apiKey.trim(), model }),
+    });
+    const result = await response.json().catch(() => ({}));
+    setBusy(false);
+    if (!response.ok) {
+      setError(result.error === "INVALID_KEY" || result.error === "INVALID_INPUT"
+        ? "المفتاح غير صحيح أو غير مكتمل."
+        : "تعذر التحقق من OpenAI حاليًا. حاول مرة أخرى.");
+      return;
+    }
+    setApiKey(""); setShowKey(false); await loadStatus();
+    flash("تم تشفير وربط مفتاح OpenAI بحسابك");
+  }
+
+  async function disconnect() {
+    setBusy(true); setError("");
+    const response = await fetch("/api/ai-connection", { method: "DELETE" });
+    setBusy(false);
+    if (!response.ok) { setError("تعذر فصل الاتصال."); return; }
+    await loadStatus(); flash("تم فصل مفتاح OpenAI من حسابك");
+  }
+
+  return (
+    <section className="panel settingsForm aiSettings">
+      <div className="aiSettingsHead">
+        <span className="aiSettingsIcon"><Sparkles size={22} /></span>
+        <div><h3>ربط النموذج الذكي</h3><p>اربط مفتاح OpenAI الخاص بك لتفعيل مساعد StockFlow.</p></div>
+        <span className={status?.connected ? "connectionBadge connected" : "connectionBadge"}>{status?.connected ? "متصل" : "غير متصل"}</span>
+      </div>
+      <div className="securityNote"><ShieldCheck size={18} /><div><b>المفتاح مشفّر</b><span>يُرسل من السيرفر فقط، ولن يظهر مرة أخرى بعد الحفظ.</span></div></div>
+      {status?.connected && status.connection && (
+        <div className="connectedKey"><div><span>OpenAI API</span><b>•••• •••• •••• {status.connection.keyHint}</b></div><div><span>النموذج</span><b>{status.connection.model}</b></div><button className="dangerButton" disabled={busy} onClick={disconnect}>فصل الاتصال</button></div>
+      )}
+      <div className="formGrid aiConnectionForm">
+        <label>مفتاح OpenAI API
+          <div className="secretInput"><input type={showKey ? "text" : "password"} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="sk-proj-..." autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setShowKey(!showKey)}>{showKey ? "إخفاء" : "إظهار"}</button></div>
+        </label>
+        <label>النموذج الافتراضي
+          <select value={model} onChange={(event) => setModel(event.target.value)}><option value="gpt-5.6-terra">GPT-5.6 Terra — متوازن</option><option value="gpt-5.6-sol">GPT-5.6 Sol — أعلى جودة</option><option value="gpt-5.6-luna">GPT-5.6 Luna — أقل تكلفة</option></select>
+        </label>
+      </div>
+      {error && <p className="formError aiConnectionError">{error}</p>}
+      <div className="aiCapabilities"><b>التمهيد الحالي يجهز:</b><span>تقارير ذكية</span><span>تنبيهات المخزون</span><span>تحليل الأرباح</span><span>إجراءات بعد التأكيد</span></div>
+      <footer><button className="primary" disabled={busy || !apiKey.trim()} onClick={connect}>{busy ? "جارٍ التحقق..." : status?.connected ? "استبدال المفتاح" : "تحقق وربط المفتاح"}</button></footer>
+    </section>
   );
 }

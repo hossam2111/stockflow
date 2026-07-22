@@ -3865,3 +3865,39 @@ html, body { max-width: 100%; overflow-x: hidden; }
   .chartSummary span { padding: 5px 7px; }
   .chart { height: 245px; padding-inline: 14px; }
 }
+
+/* Per-admin AI connection */
+.aiSettings { overflow: hidden; }
+.aiSettingsHead { display: flex; align-items: center; gap: 13px; margin-bottom: 18px; }
+.aiSettingsHead > div { flex: 1; }
+.aiSettingsHead h3 { margin: 0 0 4px; }
+.aiSettingsHead p { margin: 0; color: var(--muted); font-size: 11px; }
+.aiSettingsIcon { width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center; color: #fff; background: linear-gradient(145deg, #7774e8, #5555cf); box-shadow: 0 9px 22px rgb(85 85 207 / 22%); }
+.connectionBadge { padding: 6px 10px; border-radius: 999px; color: #8b5c18; background: #fff5df; font-size: 10px; font-weight: 800; }
+.connectionBadge.connected { color: #087052; background: #e8f8f0; }
+.securityNote { display: flex; gap: 10px; align-items: flex-start; padding: 13px 14px; margin-bottom: 18px; color: #4e4ca8; background: #f2f1ff; border: 1px solid #e1dfff; border-radius: 12px; }
+.securityNote div { display: flex; flex-direction: column; gap: 3px; }
+.securityNote b { font-size: 11px; }
+.securityNote span { color: var(--muted); font-size: 10px; }
+.connectedKey { display: grid; grid-template-columns: 1.3fr 1fr auto; gap: 12px; align-items: end; padding: 14px; margin-bottom: 18px; border: 1px solid var(--line); border-radius: 13px; background: color-mix(in srgb, var(--bg) 55%, var(--card)); }
+.connectedKey > div { display: flex; flex-direction: column; gap: 5px; }
+.connectedKey span { color: var(--muted); font-size: 9px; }
+.connectedKey b { font-size: 11px; direction: ltr; text-align: right; }
+.dangerButton { min-height: 36px; padding: 0 12px; color: #b42318; background: #fff1f0; border: 1px solid #fecdca; border-radius: 9px; }
+.aiConnectionForm { align-items: end; }
+.secretInput { position: relative; }
+.secretInput input { width: 100%; padding-left: 62px; direction: ltr; text-align: left; }
+.secretInput button { position: absolute; left: 5px; top: 5px; bottom: 5px; padding: 0 9px; color: var(--primary); background: transparent; border: 0; font-size: 9px; }
+.aiCapabilities { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 16px; }
+.aiCapabilities b { font-size: 10px; }
+.aiCapabilities span { padding: 5px 8px; border-radius: 8px; color: var(--muted); background: var(--bg); font-size: 9px; }
+.aiConnectionError { margin: 12px 0 0; }
+.dark .securityNote { color: #c7c5ff; background: #24233e; border-color: #39375f; }
+.dark .connectionBadge { color: #f5c36e; background: #3c2d16; }
+.dark .connectionBadge.connected { color: #70dbb0; background: #15392e; }
+.dark .dangerButton { color: #fda29b; background: #3b1b1a; border-color: #71302b; }
+@media (max-width: 760px) {
+  .aiSettingsHead { align-items: flex-start; flex-wrap: wrap; }
+  .connectionBadge { margin-right: 57px; }
+  .connectedKey { grid-template-columns: 1fr; align-items: stretch; }
+}

@@ -48,3 +48,31 @@ test("keeps shared accounts available until their capacity is full", async () =>
   assert.match(page, /الحساب ما زال متاحًا/);
   assert.match(page, /اكتمل الحد الأقصى/);
 });
+
+test("exports Excel-compatible UTF-8 CSV and complete withdrawal/customer data", async () => {
+  const [page, withdrawals] = await Promise.all([
+    read("app/page.tsx"),
+    read("app/api/withdrawals/route.ts"),
+  ]);
+  assert.match(page, /sep=,\\r\\n/);
+  assert.match(page, /customer_notes/);
+  assert.match(page, /account_password/);
+  assert.match(page, /previous_usage/);
+  assert.match(withdrawals, /i\.email AS account_email/);
+  assert.match(withdrawals, /i\.password AS account_password/);
+  assert.match(withdrawals, /w\.batch_id/);
+});
+
+test("stores a separate encrypted OpenAI connection for each admin", async () => {
+  const [route, credentials, database] = await Promise.all([
+    read("app/api/ai-connection/route.ts"),
+    read("lib/ai-credentials.ts"),
+    read("lib/db.ts"),
+  ]);
+  assert.match(route, /requireWorkspaceAdmin/);
+  assert.match(route, /ON CONFLICT\(user_id\)/);
+  assert.doesNotMatch(route, /decryptApiKey/);
+  assert.match(credentials, /aes-256-gcm/);
+  assert.match(credentials, /Authorization: `Bearer \$\{apiKey\}`/);
+  assert.match(database, /CREATE TABLE IF NOT EXISTS ai_connections/);
+});

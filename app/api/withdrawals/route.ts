@@ -154,7 +154,9 @@ export async function GET(request:Request){
   const requested=params.get("employeeId");
   const from=params.get("from"); const to=params.get("to");
   const employeeId=session.role==="EMPLOYEE"?session.id:requested;
-  const base=`SELECT w.id,w.user_id,w.status,w.created_at,s.name AS service,w.inventory_item_id,u.name AS employee,i.account_type,
+  const base=`SELECT w.id,w.user_id,w.status,w.created_at,w.batch_id,w.batch_quantity,w.previous_usage,w.new_usage,
+    s.name AS service,w.inventory_item_id,u.name AS employee,i.account_type,
+    i.email AS account_email,i.password AS account_password,i.otp_secret,i.otp_url,
     w.customer_name,w.customer_phone,w.customer_contact,w.customer_reference,w.customer_notes,
     w.subscription_start_date,w.subscription_months,w.subscription_end_date,w.warranty_days,w.warranty_end_date,
     w.selling_price,w.cost,w.paid_amount,(w.selling_price-w.paid_amount) AS remaining
