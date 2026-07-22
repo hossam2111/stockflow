@@ -76,3 +76,13 @@ test("stores a separate encrypted OpenAI connection for each admin", async () =>
   assert.match(credentials, /Authorization: `Bearer \$\{apiKey\}`/);
   assert.match(database, /CREATE TABLE IF NOT EXISTS ai_connections/);
 });
+
+test("isolates every admin inventory operation to their own organization", async () => {
+  const inventory = await read("app/api/inventory/route.ts");
+  assert.match(inventory, /requireWorkspaceAdmin/);
+  assert.match(inventory, /i\.organization_id=\$1/);
+  assert.match(inventory, /service_id=\$1 AND organization_id=\$2/);
+  assert.match(inventory, /WHERE id=\$1 AND organization_id=\$2 FOR UPDATE/);
+  assert.match(inventory, /DELETE FROM inventory_items WHERE id=\$1 AND organization_id=\$2/);
+  assert.match(inventory, /context\.organizationId,item\.serviceId,item\.email/);
+});
