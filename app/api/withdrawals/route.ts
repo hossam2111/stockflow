@@ -17,6 +17,7 @@ const schema = z.object({
   warrantyDays:z.number().int().min(0).max(730),
   quantity:z.number().int().min(1).max(20).default(1),
   sellingPrice:z.number().min(0).optional().default(0),
+  paidAmount:z.number().min(0).optional(),
 });
 
 function parseDate(value:string){
@@ -71,6 +72,11 @@ export async function POST(request: Request) {
           FROM withdrawals WHERE user_id=$1 AND status='COMPLETED' AND created_at>=$2`,[parsed.data.employeeId,startOfDay]);
         if(totalUsageResult.rows[0].total+parsed.data.quantity>user.daily_limit)throw new Error("DAILY_LIMIT_REACHED");
       }
+      // Accounting snapshot: cost comes from the service's default cost at sale time; paid amount
+      // defaults to the full selling price (i.e. paid in full) unless the caller records a partial payment.
+      const serviceRow=await client.query<{default_cost:number}>("SELECT default_cost FROM services WHERE id=$1 AND organization_id=$2",[parsed.data.serviceId,context.organizationId]);
+      const unitCost=serviceRow.rows[0]?.default_cost ?? 0;
+      const unitPaid=parsed.data.paidAmount ?? parsed.data.sellingPrice;
       const lock=isMemoryDatabase()?"":"FOR UPDATE SKIP LOCKED";
       const batchId=`BATCH-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
       const allocatedIds:string[]=[];
@@ -97,12 +103,12 @@ export async function POST(request: Request) {
         await client.query(`INSERT INTO withdrawals(
           id,organization_id,user_id,service_id,inventory_item_id,status,idempotency_key,previous_usage,new_usage,batch_id,batch_quantity,
           customer_name,customer_phone,customer_contact,customer_reference,customer_notes,
-          subscription_start_date,subscription_months,subscription_end_date,warranty_days,warranty_end_date,selling_price)
-          VALUES ($1,$2,$3,$4,$5,'COMPLETED',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,[
+          subscription_start_date,subscription_months,subscription_end_date,warranty_days,warranty_end_date,selling_price,cost,paid_amount)
+          VALUES ($1,$2,$3,$4,$5,'COMPLETED',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,[
           withdrawalId,context.organizationId,parsed.data.employeeId,parsed.data.serviceId,item.id,itemIdempotencyKey,item.current_usage,item.current_usage+1,batchId,parsed.data.quantity,
           parsed.data.customerName,parsed.data.customerPhone||null,parsed.data.customerContact||null,parsed.data.customerReference||null,parsed.data.customerNotes||null,
           dateOnly(subscriptionStart),parsed.data.subscriptionMonths,dateOnly(subscriptionEnd),parsed.data.warrantyDays,warrantyEnd?dateOnly(warrantyEnd):null,
-          parsed.data.sellingPrice,
+          parsed.data.sellingPrice,unitCost,unitPaid,
         ]);
         const existingCredential=credentialMap.get(item.id);
         if(existingCredential){
@@ -144,16 +150,23 @@ export async function POST(request: Request) {
 
 export async function GET(request:Request){
   const context=await getWorkspaceContext();if(!context?.organizationId)return NextResponse.json({error:"UNAUTHORIZED"},{status:401});const session=context.session;
-  const requested=new URL(request.url).searchParams.get("employeeId");
+  const params=new URL(request.url).searchParams;
+  const requested=params.get("employeeId");
+  const from=params.get("from"); const to=params.get("to");
   const employeeId=session.role==="EMPLOYEE"?session.id:requested;
   const base=`SELECT w.id,w.user_id,w.status,w.created_at,s.name AS service,w.inventory_item_id,u.name AS employee,i.account_type,
     w.customer_name,w.customer_phone,w.customer_contact,w.customer_reference,w.customer_notes,
-    w.subscription_start_date,w.subscription_months,w.subscription_end_date,w.warranty_days,w.warranty_end_date,w.selling_price
+    w.subscription_start_date,w.subscription_months,w.subscription_end_date,w.warranty_days,w.warranty_end_date,
+    w.selling_price,w.cost,w.paid_amount,(w.selling_price-w.paid_amount) AS remaining
     FROM withdrawals w JOIN services s ON s.id=w.service_id JOIN users u ON u.id=w.user_id
     JOIN inventory_items i ON i.id=w.inventory_item_id`;
-  const result=employeeId
-    ? await (await import("@/lib/db")).query(`${base} WHERE w.organization_id=$1 AND w.user_id=$2 ORDER BY w.created_at DESC LIMIT 1000`,[context.organizationId,employeeId])
-    : await (await import("@/lib/db")).query(`${base} WHERE w.organization_id=$1 ORDER BY w.created_at DESC LIMIT 1000`,[context.organizationId]);
+  const values:unknown[]=[context.organizationId];
+  const filters=["w.organization_id=$1"];
+  if(employeeId){values.push(employeeId);filters.push(`w.user_id=$${values.length}`);}
+  if(from){values.push(from);filters.push(`w.created_at>=$${values.length}::date`);}
+  if(to){values.push(to);filters.push(`w.created_at < ($${values.length}::date + INTERVAL '1 day')`);}
+  const { query }=await import("@/lib/db");
+  const result=await query(`${base} WHERE ${filters.join(" AND ")} ORDER BY w.created_at DESC LIMIT 2000`,values);
   return NextResponse.json({withdrawals:result.rows});
 }
 

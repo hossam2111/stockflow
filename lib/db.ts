@@ -36,6 +36,7 @@ const schema = [
   `CREATE TABLE IF NOT EXISTS services (
     id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id), name TEXT NOT NULL,
     active BOOLEAN NOT NULL DEFAULT TRUE, default_daily_limit INTEGER NOT NULL DEFAULT 10,
+    default_cost INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(organization_id,name)
   )`,
   `CREATE TABLE IF NOT EXISTS employee_service_permissions (
@@ -61,12 +62,17 @@ const schema = [
     customer_name TEXT, customer_phone TEXT, customer_contact TEXT, customer_reference TEXT, customer_notes TEXT,
     subscription_start_date DATE, subscription_months INTEGER, subscription_end_date DATE,
     warranty_days INTEGER NOT NULL DEFAULT 0, warranty_end_date DATE,
-    selling_price INTEGER DEFAULT 0,
+    selling_price INTEGER DEFAULT 0, cost INTEGER DEFAULT 0, paid_amount INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   `CREATE TABLE IF NOT EXISTS activity_logs (
     id TEXT PRIMARY KEY, organization_id TEXT REFERENCES organizations(id), actor_id TEXT, action TEXT NOT NULL, entity_type TEXT,
     entity_id TEXT, metadata JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS expenses (
+    id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id), actor_id TEXT,
+    description TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'GENERAL', amount INTEGER NOT NULL DEFAULT 0,
+    spent_at DATE NOT NULL DEFAULT CURRENT_DATE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   `CREATE INDEX IF NOT EXISTS withdrawals_user_created_idx ON withdrawals(user_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS inventory_available_idx ON inventory_items(service_id, status, created_at)`,
@@ -87,6 +93,8 @@ const withdrawalColumns = [
   "warranty_days INTEGER NOT NULL DEFAULT 0",
   "warranty_end_date DATE",
   "selling_price INTEGER DEFAULT 0",
+  "cost INTEGER DEFAULT 0",
+  "paid_amount INTEGER DEFAULT 0",
 ];
 
 const tenantColumns: Record<string, string[]> = {
@@ -119,19 +127,13 @@ export async function ensureDb() {
     globalThis.stockflowReady = (async () => {
       const pool = getPool();
 
-      // Serverless cold starts re-run this IIFE on every fresh instance. Creating the schema and
-      // running the ~85-query data seed on each one makes the first login slow enough to time out on
-      // Neon. Once a previous run has written the completion marker we skip the whole setup and this
-      // becomes a single round-trip. Databases left half-seeded by an earlier crash have no marker,
-      // so they simply re-run the (idempotent) seed once more and then get marked complete.
-      try {
-        const seeded = await pool.query("SELECT 1 FROM activity_logs WHERE id='seed-complete-v1' LIMIT 1");
-        if (seeded.rows.length > 0) return;
-      } catch {
-        // activity_logs does not exist yet on a brand-new database — fall through to full setup.
-      }
-
+      // Always ensure the schema exists. These are idempotent CREATE ... IF NOT EXISTS statements, so
+      // running them on every cold start is cheap AND it means brand-new tables (added later, like
+      // `expenses`) appear on already-seeded databases too — the column migration below can't create
+      // whole tables. Only the expensive ~85-query DATA seed is gated by the completion marker.
       for (const statement of schema) await pool.query(statement);
+      const seeded = await pool.query("SELECT 1 FROM activity_logs WHERE id='seed-complete-v1' LIMIT 1");
+      if (seeded.rows.length > 0) return;
 
       const adminHash = "$2b$10$Iok1m2/UFhOaM0.2NLatHOvmC5B9MC8vYDH26VehJvyJTKBWNHOYS";
       const companyAdminHash = "$2b$10$MopCftE/MgmAy1sjFSgVCOxdg6lnCNH2DR0kNZcn11pH9kdKF6H6i";
@@ -273,7 +275,7 @@ export async function ensureDb() {
   if (!globalThis.stockflowMigrationReady) {
     globalThis.stockflowMigrationReady = (async () => {
       const pool = getPool();
-      for (const [table, definitions] of Object.entries({ ...tenantColumns, inventory_items: [...tenantColumns.inventory_items, "expiry_date DATE"], withdrawals: withdrawalColumns })) {
+      for (const [table, definitions] of Object.entries({ ...tenantColumns, services: [...tenantColumns.services, "default_cost INTEGER NOT NULL DEFAULT 0"], inventory_items: [...tenantColumns.inventory_items, "expiry_date DATE"], withdrawals: withdrawalColumns })) {
         const existing = await pool.query<{ column_name: string }>(
           "SELECT column_name FROM information_schema.columns WHERE table_name=$1", [table],
         );

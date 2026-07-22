@@ -37,6 +37,7 @@ import {
   TrendingUp,
   Trophy,
   Upload,
+  Wallet,
   UsersRound,
   type LucideIcon,
 } from "lucide-react";
@@ -50,6 +51,7 @@ type View =
   | "services"
   | "employees"
   | "reports"
+  | "accounting"
   | "activity"
   | "settings";
 
@@ -61,6 +63,7 @@ const nav: { id: View; label: string; icon: LucideIcon }[] = [
   { id: "services", label: "الخدمات", icon: Layers3 },
   { id: "employees", label: "الموظفون", icon: UsersRound },
   { id: "reports", label: "التقارير", icon: FileBarChart },
+  { id: "accounting", label: "المحاسبة", icon: Wallet },
   { id: "activity", label: "سجل النشاط", icon: History },
   { id: "settings", label: "الإعدادات", icon: SettingsIcon },
 ];
@@ -113,6 +116,7 @@ type ServiceRecord = {
   name: string;
   active: boolean;
   default_daily_limit: number;
+  default_cost: number;
   total: number;
   available: number;
   available_slots: number;
@@ -160,6 +164,8 @@ type WithdrawalCustomerDetails = {
   warrantyDays: number;
   quantity: number;
   sellingPrice: number;
+  paidInFull: boolean;
+  paidAmount: number;
 };
 
 type DashboardStats = {
@@ -358,7 +364,8 @@ export default function Home() {
 
   async function attemptWithdrawal(details: WithdrawalCustomerDetails) {
     const selectedId = serviceData.find((service) => service.name === effectiveSelectedService.name)?.id ?? serviceIds[effectiveSelectedService.name];
-    const response = await fetch("/api/withdrawals", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({employeeId:currentUser?.id ?? "",serviceId:selectedId,idempotencyKey:crypto.randomUUID(),...details})});
+    const paidAmount = details.paidInFull ? details.sellingPrice : details.paidAmount;
+    const response = await fetch("/api/withdrawals", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({employeeId:currentUser?.id ?? "",serviceId:selectedId,idempotencyKey:crypto.randomUUID(),...details,paidAmount})});
     const result = await response.json();
     if (!response.ok) {
       if(result.error==="EMPLOYEE_DISABLED") setEmployeeBlocked(true);
@@ -613,10 +620,13 @@ export default function Home() {
                 setImportService(service);
                 setImportOpen(true);
               }}
+              flash={flash}
+              onUpdated={() => setDataVersion((value) => value + 1)}
             />
           )}
           {view === "employees" && <Employees flash={flash} />}
           {view === "reports" && <Reports />}
+          {view === "accounting" && <Accounting flash={flash} dataVersion={dataVersion} onChanged={() => setDataVersion((value) => value + 1)} />}
           {view === "activity" &&
             (role === "admin" ? <Activity /> : <EmployeeHistory access={employeeAccess} />)}
           {view === "settings" && (
@@ -1049,7 +1059,7 @@ function Withdraw({
 }) {
   const [details, setDetails] = useState<WithdrawalCustomerDetails>({
     customerName: "", customerPhone: "", customerContact: "واتساب", customerReference: "", customerNotes: "",
-    subscriptionStartDate: todayInCairo(), subscriptionMonths: 1, warrantyDays: 30, quantity: 1, sellingPrice: 0,
+    subscriptionStartDate: todayInCairo(), subscriptionMonths: 1, warrantyDays: 30, quantity: 1, sellingPrice: 0, paidInFull: true, paidAmount: 0,
   });
   const [submitting, setSubmitting] = useState(false);
   const [messageCopied, setMessageCopied] = useState(false);
@@ -1078,7 +1088,7 @@ function Withdraw({
   const priceLine = account.sellingPrice ? `\n💵 سعر البيع: ${account.sellingPrice} ج.م` : "";
   const deliveryMessage = `أهلًا ${account.customerName || "بك"} 👋\nتم تسجيل ${totalAllocatedUses} ${totalAllocatedUses === 1 ? "عملية سحب" : "عمليات سحب"} في خدمة ${selected.name} بنجاح.\n\n${accountLines}\n\n📅 بداية الاشتراك: ${formatArabicDate(account.subscriptionStartDate)}\n⏳ مدة الاشتراك: ${account.subscriptionMonths} ${account.subscriptionMonths === 1 ? "شهر" : "شهور"}\n🏁 تاريخ الانتهاء: ${formatArabicDate(account.subscriptionEndDate)}\n🛡️ الضمان: ${account.warrantyDays ? `${account.warrantyDays} يوم — حتى ${formatArabicDate(account.warrantyEndDate)}` : "بدون ضمان"}${priceLine}\n\n⚠️ برجاء عدم تغيير بيانات الحسابات.\nشكرًا لاختيارك لنا 💙`;
   function resetForNext() {
-    setDetails({ customerName: "", customerPhone: "", customerContact: "واتساب", customerReference: "", customerNotes: "", subscriptionStartDate: todayInCairo(), subscriptionMonths: 1, warrantyDays: 30, quantity: 1, sellingPrice: 0 });
+    setDetails({ customerName: "", customerPhone: "", customerContact: "واتساب", customerReference: "", customerNotes: "", subscriptionStartDate: todayInCairo(), subscriptionMonths: 1, warrantyDays: 30, quantity: 1, sellingPrice: 0, paidInFull: true, paidAmount: 0 });
     onReset();
   }
   async function submitWithdrawal() {
@@ -1237,6 +1247,18 @@ function Withdraw({
                   <label>سعر البيع (ج.م)
                     <input type="number" min={0} value={details.sellingPrice || ""} onChange={(event) => setDetails({ ...details, sellingPrice: Math.max(0, Number(event.target.value) || 0) })} placeholder="0" />
                   </label>
+                  <label>حالة الدفع
+                    <select value={details.paidInFull ? "FULL" : "PARTIAL"} onChange={(event) => setDetails({ ...details, paidInFull: event.target.value === "FULL" })}>
+                      <option value="FULL">مدفوع بالكامل</option>
+                      <option value="PARTIAL">آجل / دفعة جزئية</option>
+                    </select>
+                  </label>
+                  {!details.paidInFull && (
+                    <label>المدفوع الآن (ج.م)
+                      <input type="number" min={0} max={details.sellingPrice} value={details.paidAmount || ""} onChange={(event) => setDetails({ ...details, paidAmount: Math.max(0, Math.min(details.sellingPrice, Number(event.target.value) || 0)) })} placeholder="0" />
+                      <small>المتبقي على العميل: {Math.max(0, details.sellingPrice - details.paidAmount)} ج.م لكل حساب</small>
+                    </label>
+                  )}
                   <label className="wideField">ملاحظات العميل
                     <textarea value={details.customerNotes} onChange={(event) => setDetails({ ...details, customerNotes: event.target.value })} placeholder="أي تعليمات أو تفاصيل إضافية..." />
                   </label>
@@ -1880,21 +1902,44 @@ function ImportModal({
   );
 }
 
+function ServiceCostEditor({ id, cost, onSave }: { id: string; cost: number; onSave: (id: string, value: number) => Promise<void> }) {
+  const [value, setValue] = useState(cost);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setValue(cost); }, [cost]);
+  if (!id) return null;
+  return (
+    <span className="costEditor">
+      التكلفة
+      <input type="number" min={0} value={value || ""} onChange={(e) => setValue(Math.max(0, Number(e.target.value) || 0))} placeholder="0" />
+      {value !== cost && <button disabled={busy} onClick={async () => { setBusy(true); try { await onSave(id, value); } finally { setBusy(false); } }}>حفظ</button>}
+    </span>
+  );
+}
+
 function Services({
   onImport,
   records,
   onAdd,
   onView,
+  flash,
+  onUpdated,
 }: {
   onImport: (service: string) => void;
   records: ServiceRecord[];
   onAdd: () => void;
   onView: (service: string) => void;
+  flash: (s: string) => void;
+  onUpdated: () => void;
 }) {
+  async function saveCost(id: string, value: number) {
+    const res = await fetch(`/api/services?id=${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ defaultCost: value }) });
+    if (!res.ok) { flash("تعذر حفظ التكلفة"); return; }
+    flash("تم حفظ سعر التكلفة"); onUpdated();
+  }
   const cards = records.length ? records.map((record, index) => {
     const preset = services.find((service) => service.name === record.name);
-    return { name: record.name, code: preset?.code ?? record.name.slice(0, 2).toUpperCase(), color: preset?.color ?? ["#2563eb", "#7c3aed", "#0f766e", "#d97706"][index % 4], stock: record.available, used: Math.max(0, record.total - record.available), total: record.total, type: preset?.type ?? "مخصص", price: preset?.price ?? 0 };
-  }) : services;
+    return { id: record.id, name: record.name, code: preset?.code ?? record.name.slice(0, 2).toUpperCase(), color: preset?.color ?? ["#2563eb", "#7c3aed", "#0f766e", "#d97706"][index % 4], stock: record.available, used: Math.max(0, record.total - record.available), total: record.total, type: preset?.type ?? "مخصص", price: preset?.price ?? 0, defaultCost: record.default_cost };
+  }) : services.map((s) => ({ ...s, id: "", defaultCost: 0 }));
   return (
     <>
       <PageHead
@@ -1945,9 +1990,7 @@ function Services({
               <i style={{ width: `${(s.stock / s.total) * 100}%` }} />
             </div>
             <footer>
-              <span>
-                سعر البيع <b>{s.price} ج.م</b>
-              </span>
+              <ServiceCostEditor id={s.id} cost={s.defaultCost} onSave={saveCost} />
               <div>
                 <button
                   className="uploadService"
@@ -2029,13 +2072,14 @@ function Organizations({onSelected}:{onSelected:()=>void}){
 function AddServiceModal({ onClose, onCreated }: { onClose: () => void; onCreated: (message: string) => void }) {
   const [name, setName] = useState("");
   const [limit, setLimit] = useState(5);
+  const [cost, setCost] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   async function save() {
     if (name.trim().length < 2) { setError("اكتب اسم الخدمة"); return; }
     setSaving(true); setError("");
     try {
-      const response = await fetch("/api/services", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, defaultDailyLimit: limit }) });
+      const response = await fetch("/api/services", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, defaultDailyLimit: limit, defaultCost: Math.max(0, Math.round(cost)) }) });
       const result = await response.json();
       if (!response.ok) { setError(result.error === "SERVICE_EXISTS" ? "الخدمة موجودة بالفعل" : "تعذر إضافة الخدمة"); return; }
       onCreated(`تمت إضافة خدمة ${result.service.name}`);
@@ -2043,7 +2087,7 @@ function AddServiceModal({ onClose, onCreated }: { onClose: () => void; onCreate
   }
   return <div className="modalBackdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="simpleModal"><header><div><h2>إضافة خدمة جديدة</h2><p>سيصبح لها مخزون مستقل ويمكن رفع حساباتها مباشرة.</p></div><button onClick={onClose}>×</button></header>
-      <div className="modalForm"><label>اسم الخدمة<input value={name} onChange={(event) => setName(event.target.value)} placeholder="مثال: Gemini Advanced" /></label><label>الحد اليومي الافتراضي<input type="number" min="0" value={limit} onChange={(event) => setLimit(Math.max(0, Number(event.target.value)))} /></label>{error && <p className="formError">{error}</p>}</div>
+      <div className="modalForm"><label>اسم الخدمة<input value={name} onChange={(event) => setName(event.target.value)} placeholder="مثال: Gemini Advanced" /></label><label>الحد اليومي الافتراضي<input type="number" min="0" value={limit} onChange={(event) => setLimit(Math.max(0, Number(event.target.value)))} /></label><label>سعر التكلفة الافتراضي (ج.م)<input type="number" min="0" value={cost || ""} onChange={(event) => setCost(Math.max(0, Number(event.target.value) || 0))} placeholder="0" /></label>{error && <p className="formError">{error}</p>}</div>
       <footer><button className="secondary" onClick={onClose}>إلغاء</button><button className="primary" disabled={saving} onClick={save}>{saving ? "جارٍ الحفظ..." : "إضافة الخدمة"}</button></footer>
     </section>
   </div>;
@@ -2459,7 +2503,11 @@ function Reports() {
   const [serviceFilter, setServiceFilter] = useState("ALL");
   const [employeeFilter, setEmployeeFilter] = useState("ALL");
   const [applied, setApplied] = useState(false);
-  useEffect(() => { fetch("/api/withdrawals").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => setWithdrawals(data.withdrawals)).catch(() => {}); }, []);
+  const [preset, setPreset] = useState<PeriodPreset>("30d");
+  const [custom, setCustom] = useState({ from: "", to: "" });
+  const range = preset === "custom" ? custom : periodRange(preset);
+  const qs = `${range.from ? `from=${range.from}&` : ""}${range.to ? `to=${range.to}` : ""}`;
+  useEffect(() => { fetch(`/api/withdrawals?${qs}`).then((response) => response.ok ? response.json() : Promise.reject()).then((data) => setWithdrawals(data.withdrawals)).catch(() => {}); }, [qs]);
   const visible = withdrawals.filter((row) => (serviceFilter === "ALL" || row.service === serviceFilter) && (employeeFilter === "ALL" || row.user_id === employeeFilter));
   const serviceCounts = visible.reduce<Record<string, number>>((counts, row) => { const name=String(row.service); counts[name]=(counts[name]??0)+1; return counts; }, {});
   const topService = Object.entries(serviceCounts).sort((a,b)=>b[1]-a[1])[0]?.[0] ?? "—";
@@ -2485,8 +2533,9 @@ function Reports() {
         title="التقارير"
         subtitle="حوّل بيانات المخزون والفريق إلى قرارات واضحة."
       >
-        <button className="primary" onClick={() => downloadCsv("stockflow-withdrawals.csv", [["ID","Employee","Customer","Phone","Contact","Service","Inventory ID","Start Date","Months","End Date","Warranty Days","Warranty End","Selling Price","Status","Created At"], ...visible.map((row) => [String(row.id),String(row.employee),String(row.customer_name??""),String(row.customer_phone??""),String(row.customer_contact??""),String(row.service),String(row.inventory_item_id),String(row.subscription_start_date??""),Number(row.subscription_months??0),String(row.subscription_end_date??""),Number(row.warranty_days??0),String(row.warranty_end_date??""),Number(row.selling_price??0),String(row.status),String(row.created_at)])])}><Download size={15} /> إنشاء وتصدير تقرير</button>
+        <button className="primary" onClick={() => downloadCsv("stockflow-withdrawals.csv", [["ID","Employee","Customer","Phone","Contact","Service","Inventory ID","Start Date","Months","End Date","Warranty Days","Warranty End","Selling Price","Paid","Remaining","Status","Created At"], ...visible.map((row) => [String(row.id),String(row.employee),String(row.customer_name??""),String(row.customer_phone??""),String(row.customer_contact??""),String(row.service),String(row.inventory_item_id),String(row.subscription_start_date??""),Number(row.subscription_months??0),String(row.subscription_end_date??""),Number(row.warranty_days??0),String(row.warranty_end_date??""),Number(row.selling_price??0),Number(row.paid_amount??0),Number(row.remaining??0),String(row.status),String(row.created_at)])])}><Download size={15} /> إنشاء وتصدير تقرير</button>
       </PageHead>
+      <PeriodFilter preset={preset} setPreset={setPreset} custom={custom} setCustom={setCustom} />
       <div className="reportFilters panel">
         <label>
           الفترة الزمنية
@@ -2603,6 +2652,142 @@ function Reports() {
             </tbody>
           </table>
         </div>
+      </section>
+    </>
+  );
+}
+
+type PeriodPreset = "today" | "7d" | "30d" | "month" | "all" | "custom";
+function periodRange(preset: PeriodPreset): { from: string; to: string } {
+  const today = todayInCairo();
+  if (preset === "today") return { from: today, to: today };
+  if (preset === "7d") return { from: addDaysToDate(today, -6), to: today };
+  if (preset === "30d") return { from: addDaysToDate(today, -29), to: today };
+  if (preset === "month") return { from: `${today.slice(0, 8)}01`, to: today };
+  return { from: "", to: "" };
+}
+function PeriodFilter({ preset, setPreset, custom, setCustom }: {
+  preset: PeriodPreset; setPreset: (p: PeriodPreset) => void;
+  custom: { from: string; to: string }; setCustom: (c: { from: string; to: string }) => void;
+}) {
+  const presets: [PeriodPreset, string][] = [["today", "اليوم"], ["7d", "آخر أسبوع"], ["30d", "آخر شهر"], ["month", "الشهر الحالي"], ["all", "كل الفترات"], ["custom", "مخصص"]];
+  return (
+    <div className="periodFilter panel">
+      <div className="periodChips">
+        {presets.map(([id, label]) => (
+          <button key={id} className={preset === id ? "active" : ""} onClick={() => setPreset(id)}>{label}</button>
+        ))}
+      </div>
+      {preset === "custom" && (
+        <div className="periodCustom">
+          <label>من <input type="date" value={custom.from} onChange={(e) => setCustom({ ...custom, from: e.target.value })} /></label>
+          <label>إلى <input type="date" value={custom.to} onChange={(e) => setCustom({ ...custom, to: e.target.value })} /></label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type AccountingData = {
+  summary: { revenue: number; collected: number; cost: number; outstanding: number; expenses: number; grossProfit: number; netProfit: number; treasury: number; sales: number };
+  perService: { name: string; revenue: number; cost: number; profit: number; sales: number }[];
+  perEmployee: { name: string; revenue: number; profit: number; sales: number }[];
+  debts: { customer: string; customer_name: string; total: number; paid: number; remaining: number; sales: number }[];
+  expensesByCategory: { category: string; total: number }[];
+};
+type ExpenseRow = { id: string; description: string; category: string; amount: number; spent_at: string; created_at: string };
+
+function Accounting({ flash, dataVersion, onChanged }: { flash: (s: string) => void; dataVersion: number; onChanged: () => void }) {
+  const [preset, setPreset] = useState<PeriodPreset>("30d");
+  const [custom, setCustom] = useState({ from: "", to: "" });
+  const range = preset === "custom" ? custom : periodRange(preset);
+  const qs = `${range.from ? `from=${range.from}&` : ""}${range.to ? `to=${range.to}` : ""}`;
+  const [data, setData] = useState<AccountingData | null>(null);
+  const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
+  const [expenseForm, setExpenseForm] = useState({ description: "", amount: 0, category: "عام" });
+  useEffect(() => {
+    fetch(`/api/accounting?${qs}`).then((r) => r.ok ? r.json() : Promise.reject()).then(setData).catch(() => setData(null));
+    fetch(`/api/expenses?${qs}`).then((r) => r.ok ? r.json() : Promise.reject()).then((d) => setExpenses(d.expenses)).catch(() => setExpenses([]));
+  }, [qs, dataVersion]);
+  const s = data?.summary;
+  const money = (n: number | undefined) => `${(n ?? 0).toLocaleString("ar-EG")} ج.م`;
+  async function addExpense() {
+    if (!expenseForm.description.trim() || expenseForm.amount <= 0) { flash("اكتب وصفًا ومبلغًا صحيحًا للمصروف"); return; }
+    const res = await fetch("/api/expenses", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ description: expenseForm.description, amount: Math.round(expenseForm.amount), category: expenseForm.category || "عام" }) });
+    if (!res.ok) { flash("تعذر إضافة المصروف"); return; }
+    setExpenseForm({ description: "", amount: 0, category: "عام" }); flash("تمت إضافة المصروف"); onChanged();
+  }
+  async function deleteExpense(id: string) {
+    if (!window.confirm("حذف هذا المصروف؟")) return;
+    const res = await fetch(`/api/expenses?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (res.ok) { flash("تم حذف المصروف"); onChanged(); }
+  }
+  async function collectDebt(customer: string, remaining: number) {
+    const input = window.prompt(`المبلغ المُحصّل من ${customer} (المتبقي ${remaining} ج.م):`, String(remaining));
+    if (input === null) return;
+    const amount = Math.round(Number(input));
+    if (!amount || amount <= 0) return;
+    const isPhone = /\d/.test(customer);
+    const res = await fetch("/api/payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(isPhone ? { customerPhone: customer, amount } : { customerName: customer, amount }) });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) { flash(result.error === "NO_OUTSTANDING" ? "لا يوجد مبلغ مستحق على هذا العميل" : "تعذر تسجيل الدفعة"); return; }
+    flash(`تم تحصيل ${result.applied} ج.م`); onChanged();
+  }
+  return (
+    <>
+      <PageHead title="المحاسبة" subtitle="الإيرادات والتكلفة والأرباح والمصروفات وديون العملاء خلال الفترة.">
+        <button className="secondary" onClick={() => downloadCsv("stockflow-accounting.csv", [["المؤشر", "القيمة (ج.م)"], ["الإيراد", s?.revenue ?? 0], ["المحصّل", s?.collected ?? 0], ["التكلفة", s?.cost ?? 0], ["مجمل الربح", s?.grossProfit ?? 0], ["المصروفات", s?.expenses ?? 0], ["صافي الربح", s?.netProfit ?? 0], ["الخزينة", s?.treasury ?? 0], ["مستحقات العملاء", s?.outstanding ?? 0]])}><Download size={15} /> تصدير ملخص</button>
+      </PageHead>
+      <PeriodFilter preset={preset} setPreset={setPreset} custom={custom} setCustom={setCustom} />
+      <div className="metrics">
+        <Metric icon={TrendingUp} label="الإيراد" value={money(s?.revenue)} change={`${s?.sales ?? 0} عملية`} note="إجمالي المبيعات" tone="blue" />
+        <Metric icon={Boxes} label="التكلفة" value={money(s?.cost)} change="تكلفة البضاعة" note="حسب تكلفة الخدمة" tone="orange" />
+        <Metric icon={Wallet} label="مجمل الربح" value={money(s?.grossProfit)} change="الإيراد − التكلفة" note="قبل المصروفات" tone="green" />
+        <Metric icon={FileBarChart} label="صافي الربح" value={money(s?.netProfit)} change={`− ${money(s?.expenses)} مصروفات`} note="بعد المصروفات" tone="purple" />
+      </div>
+      <div className="metrics">
+        <Metric icon={Wallet} label="الخزينة" value={money(s?.treasury)} change="محصّل − مصروفات" note="النقدية المتاحة" tone="green" />
+        <Metric icon={PackageCheck} label="المحصّل" value={money(s?.collected)} change="مدفوع" note="من العملاء" tone="blue" />
+        <Metric icon={AlertTriangle} label="مستحقات (آجل)" value={money(s?.outstanding)} change="غير محصّل" note="ديون العملاء" tone="orange" />
+        <Metric icon={TrendingUp} label="المصروفات" value={money(s?.expenses)} change="مصروفات الفترة" note="إجمالي الخرج" tone="purple" />
+      </div>
+      <div className="dashboardGrid">
+        <section className="panel tablePanel">
+          <div className="panelHead"><h3>الربح حسب الخدمة</h3></div>
+          <div className="tableWrap"><table>
+            <thead><tr><th>الخدمة</th><th>مبيعات</th><th>إيراد</th><th>تكلفة</th><th>ربح</th></tr></thead>
+            <tbody>
+              {(data?.perService ?? []).map((r) => (<tr key={r.name}><td><b>{r.name}</b></td><td>{r.sales}</td><td>{money(r.revenue)}</td><td>{money(r.cost)}</td><td><b>{money(r.profit)}</b></td></tr>))}
+              {!(data?.perService?.length) && <tr><td colSpan={5} className="emptyState">لا توجد مبيعات في الفترة.</td></tr>}
+            </tbody>
+          </table></div>
+        </section>
+        <section className="panel tablePanel">
+          <div className="panelHead"><h3>ديون العملاء (آجل)</h3></div>
+          <div className="tableWrap"><table>
+            <thead><tr><th>العميل</th><th>إجمالي</th><th>مدفوع</th><th>متبقي</th><th /></tr></thead>
+            <tbody>
+              {(data?.debts ?? []).map((r) => (<tr key={r.customer}><td><b>{r.customer_name || r.customer}</b><small className="tableSubtext">{r.customer}</small></td><td>{money(r.total)}</td><td>{money(r.paid)}</td><td><b>{money(r.remaining)}</b></td><td><button className="dots" onClick={() => collectDebt(r.customer, r.remaining)}>تحصيل</button></td></tr>))}
+              {!(data?.debts?.length) && <tr><td colSpan={5} className="emptyState">لا توجد مستحقات على العملاء.</td></tr>}
+            </tbody>
+          </table></div>
+        </section>
+      </div>
+      <section className="panel tablePanel">
+        <div className="panelHead"><h3>المصروفات</h3></div>
+        <div className="expenseForm">
+          <label>الوصف<input value={expenseForm.description} onChange={(e) => setExpenseForm({ ...expenseForm, description: e.target.value })} placeholder="مثال: إعلان فيسبوك" /></label>
+          <label>المبلغ (ج.م)<input type="number" min={1} value={expenseForm.amount || ""} onChange={(e) => setExpenseForm({ ...expenseForm, amount: Math.max(0, Number(e.target.value) || 0) })} placeholder="0" /></label>
+          <label>التصنيف<input value={expenseForm.category} onChange={(e) => setExpenseForm({ ...expenseForm, category: e.target.value })} placeholder="عام" /></label>
+          <button className="primary" onClick={addExpense}><Plus size={15} /> إضافة مصروف</button>
+        </div>
+        <div className="tableWrap"><table>
+          <thead><tr><th>التاريخ</th><th>الوصف</th><th>التصنيف</th><th>المبلغ</th><th /></tr></thead>
+          <tbody>
+            {expenses.map((e) => (<tr key={e.id}><td>{formatArabicDate(String(e.spent_at))}</td><td>{e.description}</td><td>{e.category}</td><td><b>{money(e.amount)}</b></td><td><button className="dots danger" aria-label="حذف" onClick={() => deleteExpense(e.id)}><Trash2 size={14} /></button></td></tr>))}
+            {!expenses.length && <tr><td colSpan={5} className="emptyState">لا توجد مصروفات في الفترة.</td></tr>}
+          </tbody>
+        </table></div>
       </section>
     </>
   );
