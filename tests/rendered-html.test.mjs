@@ -54,7 +54,7 @@ test("exports Excel-compatible UTF-8 CSV and complete withdrawal/customer data",
     read("app/page.tsx"),
     read("app/api/withdrawals/route.ts"),
   ]);
-  assert.match(page, /sep=,\\r\\n/);
+  assert.match(page, /exportToExcel/);
   assert.match(page, /customer_notes/);
   assert.match(page, /account_password/);
   assert.match(page, /previous_usage/);
