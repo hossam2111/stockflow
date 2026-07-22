@@ -1,0 +1,6 @@
+الإيميل,كلمة المرور,مفتاح OTP,موقع استخراج OTP
+user.demo1@example.com,Pass12345!,JBSWY3DPEHPK3PXP,https://2fa.live
+user.demo2@example.com,Secret9876#,KRSXG5DSNFXGC4TF,https://2fa.live
+user.demo3@example.com,Secure2026$,ONSWG4TFORUGS4ZA,https://2fa.live
+user.demo4@example.com,MyPassword77,,
+user.demo5@example.com,PassWord#88,,
