@@ -74,6 +74,22 @@ const schema = [
     description TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'GENERAL', amount INTEGER NOT NULL DEFAULT 0,
     spent_at DATE NOT NULL DEFAULT CURRENT_DATE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
+  `CREATE TABLE IF NOT EXISTS suppliers (
+    id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id),
+    name TEXT NOT NULL, phone TEXT, notes TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS purchases (
+    id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id),
+    supplier_id TEXT NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+    item TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 1, unit_cost INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0, paid INTEGER NOT NULL DEFAULT 0,
+    purchased_at DATE NOT NULL DEFAULT CURRENT_DATE, notes TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS wages (
+    id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id),
+    name TEXT NOT NULL, role TEXT, amount INTEGER NOT NULL DEFAULT 0,
+    paid_at DATE NOT NULL DEFAULT CURRENT_DATE, notes TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
   `CREATE INDEX IF NOT EXISTS withdrawals_user_created_idx ON withdrawals(user_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS inventory_available_idx ON inventory_items(service_id, status, created_at)`,
 ];

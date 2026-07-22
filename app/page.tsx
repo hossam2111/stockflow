@@ -36,6 +36,7 @@ import {
   Trash2,
   TrendingUp,
   Trophy,
+  Truck,
   Upload,
   Wallet,
   UsersRound,
@@ -52,6 +53,7 @@ type View =
   | "employees"
   | "reports"
   | "accounting"
+  | "suppliers"
   | "activity"
   | "settings";
 
@@ -64,6 +66,7 @@ const nav: { id: View; label: string; icon: LucideIcon }[] = [
   { id: "employees", label: "الموظفون", icon: UsersRound },
   { id: "reports", label: "التقارير", icon: FileBarChart },
   { id: "accounting", label: "المحاسبة", icon: Wallet },
+  { id: "suppliers", label: "الموردين", icon: Truck },
   { id: "activity", label: "سجل النشاط", icon: History },
   { id: "settings", label: "الإعدادات", icon: SettingsIcon },
 ];
@@ -221,11 +224,15 @@ const serviceRank = (name: string) => serviceOrder.get(name) ?? Number.MAX_SAFE_
 
 function downloadCsv(filename: string, rows: (string | number | boolean | null | undefined)[][]) {
   const csv = rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n");
+  const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
   const link = document.createElement("a");
-  link.href = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
+  link.href = url;
   link.download = filename;
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(link.href);
+  document.body.removeChild(link);
+  // Revoke on the next tick \u2014 revoking synchronously cancels the download and yields an empty file.
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
 function addMonthsToDate(value: string, months: number) {
@@ -627,6 +634,7 @@ export default function Home() {
           {view === "employees" && <Employees flash={flash} />}
           {view === "reports" && <Reports />}
           {view === "accounting" && <Accounting flash={flash} dataVersion={dataVersion} onChanged={() => setDataVersion((value) => value + 1)} />}
+          {view === "suppliers" && <Suppliers flash={flash} />}
           {view === "activity" &&
             (role === "admin" ? <Activity /> : <EmployeeHistory access={employeeAccess} />)}
           {view === "settings" && (
@@ -2797,6 +2805,117 @@ function Accounting({ flash, dataVersion, onChanged }: { flash: (s: string) => v
           </tbody>
         </table></div>
       </section>
+    </>
+  );
+}
+
+type SupplierRow = { id: string; name: string; phone: string | null; notes: string | null; total_purchased: number; total_paid: number; owed: number; purchases: number };
+type PurchaseRow = { id: string; supplier_id: string; supplier: string; item: string; quantity: number; unit_cost: number; total: number; paid: number; remaining: number; purchased_at: string; notes: string | null };
+type WageRow = { id: string; name: string; role: string | null; amount: number; paid_at: string; notes: string | null };
+
+function Suppliers({ flash }: { flash: (s: string) => void }) {
+  const [tab, setTab] = useState<"suppliers" | "wages">("suppliers");
+  const [version, setVersion] = useState(0);
+  const [suppliers, setSuppliers] = useState<SupplierRow[]>([]);
+  const [purchases, setPurchases] = useState<PurchaseRow[]>([]);
+  const [wages, setWages] = useState<WageRow[]>([]);
+  const [wageTotal, setWageTotal] = useState(0);
+  const [supplierForm, setSupplierForm] = useState({ name: "", phone: "" });
+  const [purchaseForm, setPurchaseForm] = useState({ supplierId: "", item: "", quantity: 1, unitCost: 0, paid: 0, paidInFull: true });
+  const [wageForm, setWageForm] = useState({ name: "", role: "", amount: 0 });
+  useEffect(() => {
+    fetch("/api/suppliers").then((r) => r.ok ? r.json() : Promise.reject()).then((d) => setSuppliers(d.suppliers)).catch(() => {});
+    fetch("/api/purchases").then((r) => r.ok ? r.json() : Promise.reject()).then((d) => setPurchases(d.purchases)).catch(() => {});
+    fetch("/api/wages").then((r) => r.ok ? r.json() : Promise.reject()).then((d) => { setWages(d.wages); setWageTotal(d.total); }).catch(() => {});
+  }, [version]);
+  const money = (n: number) => `${(n ?? 0).toLocaleString("ar-EG")} ج.م`;
+  const refresh = () => setVersion((v) => v + 1);
+  async function addSupplier() { if (supplierForm.name.trim().length < 2) { flash("اكتب اسم المورد"); return; } const r = await fetch("/api/suppliers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(supplierForm) }); if (!r.ok) { flash("تعذر إضافة المورد"); return; } setSupplierForm({ name: "", phone: "" }); flash("تمت إضافة المورد"); refresh(); }
+  async function delSupplier(id: string) { if (!window.confirm("حذف المورد وكل مشترياته؟")) return; const r = await fetch(`/api/suppliers?id=${encodeURIComponent(id)}`, { method: "DELETE" }); if (r.ok) { flash("تم حذف المورد"); refresh(); } }
+  async function paySupplier(s: SupplierRow) { const input = window.prompt(`المبلغ المدفوع لـ ${s.name} (المتبقي ${s.owed} ج.م):`, String(s.owed)); if (input === null) return; const pay = Math.round(Number(input)); if (!pay || pay <= 0) return; const r = await fetch(`/api/suppliers?id=${encodeURIComponent(s.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pay }) }); const res = await r.json().catch(() => ({})); if (!r.ok) { flash(res.error === "NO_OUTSTANDING" ? "لا يوجد مبلغ مستحق" : "تعذر تسجيل الدفعة"); return; } flash(`تم دفع ${res.applied} ج.م`); refresh(); }
+  async function addPurchase() { if (!purchaseForm.supplierId) { flash("اختر المورد"); return; } if (!purchaseForm.item.trim()) { flash("اكتب الصنف"); return; } const total = purchaseForm.quantity * purchaseForm.unitCost; const paid = purchaseForm.paidInFull ? total : Math.min(purchaseForm.paid, total); const r = await fetch("/api/purchases", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ supplierId: purchaseForm.supplierId, item: purchaseForm.item, quantity: purchaseForm.quantity, unitCost: purchaseForm.unitCost, paid }) }); if (!r.ok) { flash("تعذر تسجيل الشراء"); return; } setPurchaseForm({ supplierId: purchaseForm.supplierId, item: "", quantity: 1, unitCost: 0, paid: 0, paidInFull: true }); flash("تم تسجيل الشراء"); refresh(); }
+  async function delPurchase(id: string) { if (!window.confirm("حذف عملية الشراء؟")) return; const r = await fetch(`/api/purchases?id=${encodeURIComponent(id)}`, { method: "DELETE" }); if (r.ok) { flash("تم الحذف"); refresh(); } }
+  async function addWage() { if (wageForm.name.trim().length < 2 || wageForm.amount <= 0) { flash("اكتب الاسم والمبلغ"); return; } const r = await fetch("/api/wages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: wageForm.name, role: wageForm.role, amount: Math.round(wageForm.amount) }) }); if (!r.ok) { flash("تعذر تسجيل الدفعة"); return; } setWageForm({ name: "", role: "", amount: 0 }); flash("تم تسجيل الراتب/الأجر"); refresh(); }
+  async function delWage(id: string) { if (!window.confirm("حذف السجل؟")) return; const r = await fetch(`/api/wages?id=${encodeURIComponent(id)}`, { method: "DELETE" }); if (r.ok) { flash("تم الحذف"); refresh(); } }
+  const totalOwed = suppliers.reduce((sum, x) => sum + x.owed, 0);
+  const totalPurchased = suppliers.reduce((sum, x) => sum + x.total_purchased, 0);
+  return (
+    <>
+      <PageHead title="الموردين والمشتريات" subtitle="تابع مشترياتك من كل تاجر والمستحق عليك — منفصل تمامًا عن المصروفات." />
+      <div className="periodChips" style={{ marginBottom: 16 }}>
+        <button className={tab === "suppliers" ? "active" : ""} onClick={() => setTab("suppliers")}>الموردون والمشتريات</button>
+        <button className={tab === "wages" ? "active" : ""} onClick={() => setTab("wages")}>الرواتب والأجور</button>
+      </div>
+      {tab === "suppliers" ? (
+        <>
+          <div className="metrics">
+            <Metric icon={Truck} label="الموردون" value={String(suppliers.length)} change="مسجّل" note="عدد التجار" tone="blue" />
+            <Metric icon={Boxes} label="إجمالي المشتريات" value={money(totalPurchased)} change="مدى الحياة" note="قيمة ما اشتريته" tone="purple" />
+            <Metric icon={AlertTriangle} label="المستحق عليك" value={money(totalOwed)} change="آجل الموردين" note="لكل الموردين" tone="orange" />
+          </div>
+          <div className="dashboardGrid">
+            <section className="panel tablePanel">
+              <div className="panelHead"><h3>الموردون</h3></div>
+              <div className="expenseForm" style={{ gridTemplateColumns: "2fr 1fr auto" }}>
+                <label>اسم المورد<input value={supplierForm.name} onChange={(e) => setSupplierForm({ ...supplierForm, name: e.target.value })} placeholder="مثال: محمد" /></label>
+                <label>الهاتف<input value={supplierForm.phone} onChange={(e) => setSupplierForm({ ...supplierForm, phone: e.target.value })} placeholder="01xxxxxxxxx" dir="ltr" /></label>
+                <button className="primary" onClick={addSupplier}><Plus size={15} /> إضافة مورد</button>
+              </div>
+              <div className="tableWrap"><table>
+                <thead><tr><th>المورد</th><th>مشتريات</th><th>مدفوع</th><th>مستحق</th><th /></tr></thead>
+                <tbody>
+                  {suppliers.map((s) => (<tr key={s.id}><td><b>{s.name}</b><small className="tableSubtext">{s.phone || "—"}</small></td><td>{money(s.total_purchased)}</td><td>{money(s.total_paid)}</td><td><b>{money(s.owed)}</b></td><td><div className="rowActions">{s.owed > 0 && <button className="dots" onClick={() => paySupplier(s)}>دفع</button>}<button className="dots danger" onClick={() => delSupplier(s.id)}><Trash2 size={14} /></button></div></td></tr>))}
+                  {!suppliers.length && <tr><td colSpan={5} className="emptyState">لا يوجد موردون بعد.</td></tr>}
+                </tbody>
+              </table></div>
+            </section>
+            <section className="panel tablePanel">
+              <div className="panelHead"><h3>تسجيل عملية شراء</h3></div>
+              <div className="expenseForm" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                <label>المورد<select value={purchaseForm.supplierId} onChange={(e) => setPurchaseForm({ ...purchaseForm, supplierId: e.target.value })}><option value="">اختر المورد</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+                <label>الصنف<input value={purchaseForm.item} onChange={(e) => setPurchaseForm({ ...purchaseForm, item: e.target.value })} placeholder="مثال: حسابات جيميني" /></label>
+                <label>الكمية<input type="number" min={1} value={purchaseForm.quantity} onChange={(e) => setPurchaseForm({ ...purchaseForm, quantity: Math.max(1, Number(e.target.value) || 1) })} /></label>
+                <label>سعر الوحدة (ج.م)<input type="number" min={0} value={purchaseForm.unitCost || ""} onChange={(e) => setPurchaseForm({ ...purchaseForm, unitCost: Math.max(0, Number(e.target.value) || 0) })} placeholder="0" /></label>
+                <label>حالة الدفع<select value={purchaseForm.paidInFull ? "FULL" : "PARTIAL"} onChange={(e) => setPurchaseForm({ ...purchaseForm, paidInFull: e.target.value === "FULL" })}><option value="FULL">مدفوع بالكامل</option><option value="PARTIAL">آجل / جزئي</option></select></label>
+                {!purchaseForm.paidInFull && <label>المدفوع الآن<input type="number" min={0} value={purchaseForm.paid || ""} onChange={(e) => setPurchaseForm({ ...purchaseForm, paid: Math.max(0, Number(e.target.value) || 0) })} placeholder="0" /></label>}
+              </div>
+              <div style={{ padding: "0 16px 14px" }}><button className="primary" onClick={addPurchase}><Plus size={15} /> تسجيل الشراء (الإجمالي {money(purchaseForm.quantity * purchaseForm.unitCost)})</button></div>
+            </section>
+          </div>
+          <section className="panel tablePanel">
+            <div className="panelHead"><h3>سجل المشتريات</h3></div>
+            <div className="tableWrap"><table>
+              <thead><tr><th>التاريخ</th><th>المورد</th><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th><th>مدفوع</th><th>متبقي</th><th /></tr></thead>
+              <tbody>
+                {purchases.map((p) => (<tr key={p.id}><td>{formatArabicDate(String(p.purchased_at))}</td><td>{p.supplier}</td><td>{p.item}</td><td>{p.quantity}</td><td>{money(p.unit_cost)}</td><td><b>{money(p.total)}</b></td><td>{money(p.paid)}</td><td><b>{money(p.remaining)}</b></td><td><button className="dots danger" onClick={() => delPurchase(p.id)}><Trash2 size={14} /></button></td></tr>))}
+                {!purchases.length && <tr><td colSpan={9} className="emptyState">لا توجد مشتريات مسجّلة.</td></tr>}
+              </tbody>
+            </table></div>
+          </section>
+        </>
+      ) : (
+        <>
+          <div className="metrics">
+            <Metric icon={UsersRound} label="إجمالي الرواتب والأجور" value={money(wageTotal)} change="مدفوع" note="كل السجلات" tone="purple" />
+          </div>
+          <section className="panel tablePanel">
+            <div className="panelHead"><h3>تسجيل راتب / أجر / تعويض</h3></div>
+            <div className="expenseForm">
+              <label>الاسم<input value={wageForm.name} onChange={(e) => setWageForm({ ...wageForm, name: e.target.value })} placeholder="اسم الشخص" /></label>
+              <label>الصفة<input value={wageForm.role} onChange={(e) => setWageForm({ ...wageForm, role: e.target.value })} placeholder="مثال: موظف / تعويض" /></label>
+              <label>المبلغ (ج.م)<input type="number" min={1} value={wageForm.amount || ""} onChange={(e) => setWageForm({ ...wageForm, amount: Math.max(0, Number(e.target.value) || 0) })} placeholder="0" /></label>
+              <button className="primary" onClick={addWage}><Plus size={15} /> تسجيل</button>
+            </div>
+            <div className="tableWrap"><table>
+              <thead><tr><th>التاريخ</th><th>الاسم</th><th>الصفة</th><th>المبلغ</th><th /></tr></thead>
+              <tbody>
+                {wages.map((w) => (<tr key={w.id}><td>{formatArabicDate(String(w.paid_at))}</td><td><b>{w.name}</b></td><td>{w.role || "—"}</td><td><b>{money(w.amount)}</b></td><td><button className="dots danger" onClick={() => delWage(w.id)}><Trash2 size={14} /></button></td></tr>))}
+                {!wages.length && <tr><td colSpan={5} className="emptyState">لا توجد سجلات.</td></tr>}
+              </tbody>
+            </table></div>
+          </section>
+        </>
+      )}
     </>
   );
 }
