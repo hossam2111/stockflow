@@ -20,14 +20,16 @@ export async function POST(request: Request) {
   try {
     const result=await transaction(async client=>{
       const outstanding=await client.query<{ id: string; remaining: number }>(
-        `SELECT id, (selling_price-paid_amount) AS remaining FROM withdrawals
-         WHERE organization_id=$1 AND status='COMPLETED' AND ${matchCol}=$2 AND selling_price>paid_amount
-         ORDER BY created_at ASC FOR UPDATE`, [context.organizationId, matchVal]);
+        `SELECT id, withdrawal_id, (total_amount-paid_amount) AS remaining FROM sales
+         WHERE organization_id=$1 AND status<>'CANCELLED' AND ${matchCol}=$2 AND total_amount>paid_amount
+         ORDER BY sold_at ASC,created_at ASC FOR UPDATE`, [context.organizationId, matchVal]);
       let left=parsed.data.amount; let applied=0;
       for(const row of outstanding.rows){
         if(left<=0)break;
         const pay=Math.min(left, row.remaining);
-        await client.query("UPDATE withdrawals SET paid_amount=paid_amount+$1 WHERE id=$2",[pay,row.id]);
+        await client.query("UPDATE sales SET paid_amount=paid_amount+$1,updated_at=NOW() WHERE id=$2",[pay,row.id]);
+        const sale=await client.query<{withdrawal_id:string|null}>("SELECT withdrawal_id FROM sales WHERE id=$1",[row.id]);
+        if(sale.rows[0]?.withdrawal_id)await client.query("UPDATE withdrawals SET paid_amount=LEAST(selling_price,paid_amount+$1) WHERE id=$2",[pay,sale.rows[0].withdrawal_id]);
         left-=pay; applied+=pay;
       }
       if(applied===0)throw new Error("NO_OUTSTANDING");

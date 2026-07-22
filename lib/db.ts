@@ -8,6 +8,8 @@ declare global {
   var stockflowCatalogueReady: Promise<void> | undefined;
   var stockflowMemory: boolean | undefined;
 }
+globalThis.stockflowPool = undefined;
+globalThis.stockflowReady = undefined;
 
 // Single source of truth for the platform-wide service catalogue, in display order. Adding a service
 // here (and bumping CATALOGUE_MARKER) makes it apply to EVERY organization on the next startup.
@@ -98,6 +100,18 @@ const schema = [
     model TEXT NOT NULL DEFAULT 'gpt-5.6-terra', enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
+  `CREATE TABLE IF NOT EXISTS sales (
+    id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    withdrawal_id TEXT UNIQUE REFERENCES withdrawals(id) ON DELETE SET NULL,
+    created_by TEXT REFERENCES users(id), source TEXT NOT NULL DEFAULT 'MANUAL',
+    service_name TEXT, item_description TEXT NOT NULL, customer_name TEXT NOT NULL,
+    customer_phone TEXT, quantity INTEGER NOT NULL DEFAULT 1,
+    total_amount INTEGER NOT NULL DEFAULT 0, cost_amount INTEGER NOT NULL DEFAULT 0,
+    paid_amount INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'COMPLETED',
+    notes TEXT, sold_at DATE NOT NULL DEFAULT CURRENT_DATE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS sales_org_sold_idx ON sales(organization_id,sold_at DESC)`,
   `CREATE INDEX IF NOT EXISTS ai_connections_org_idx ON ai_connections(organization_id)`,
   `CREATE INDEX IF NOT EXISTS withdrawals_user_created_idx ON withdrawals(user_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS inventory_available_idx ON inventory_items(service_id, status, created_at)`,
@@ -157,6 +171,14 @@ export async function ensureDb() {
       // `expenses`) appear on already-seeded databases too — the column migration below can't create
       // whole tables. Only the expensive ~85-query DATA seed is gated by the completion marker.
       for (const statement of schema) await pool.query(statement);
+      await pool.query(`INSERT INTO sales(id,organization_id,withdrawal_id,created_by,source,service_name,item_description,
+        customer_name,customer_phone,quantity,total_amount,cost_amount,paid_amount,status,notes,sold_at,created_at)
+        SELECT 'SALE-'||w.id,w.organization_id,w.id,w.user_id,'WITHDRAWAL',s.name,s.name,
+          COALESCE(NULLIF(w.customer_name,''),'عميل'),w.customer_phone,1,COALESCE(w.selling_price,0),
+          COALESCE(w.cost,0),COALESCE(w.paid_amount,0),CASE WHEN w.status='RETURNED' THEN 'CANCELLED' ELSE 'COMPLETED' END,
+          w.customer_notes,w.created_at::date,w.created_at
+        FROM withdrawals w JOIN services s ON s.id=w.service_id
+        ON CONFLICT(withdrawal_id) DO NOTHING`);
       const seeded = await pool.query("SELECT 1 FROM activity_logs WHERE id='seed-complete-v1' LIMIT 1");
       if (seeded.rows.length > 0) return;
 

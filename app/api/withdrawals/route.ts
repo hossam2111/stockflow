@@ -74,7 +74,7 @@ export async function POST(request: Request) {
       }
       // Accounting snapshot: cost comes from the service's default cost at sale time; paid amount
       // defaults to the full selling price (i.e. paid in full) unless the caller records a partial payment.
-      const serviceRow=await client.query<{default_cost:number}>("SELECT default_cost FROM services WHERE id=$1 AND organization_id=$2",[parsed.data.serviceId,context.organizationId]);
+      const serviceRow=await client.query<{default_cost:number;name:string}>("SELECT default_cost,name FROM services WHERE id=$1 AND organization_id=$2",[parsed.data.serviceId,context.organizationId]);
       const unitCost=serviceRow.rows[0]?.default_cost ?? 0;
       const unitPaid=parsed.data.paidAmount ?? parsed.data.sellingPrice;
       const lock=isMemoryDatabase()?"":"FOR UPDATE SKIP LOCKED";
@@ -109,6 +109,11 @@ export async function POST(request: Request) {
           parsed.data.customerName,parsed.data.customerPhone||null,parsed.data.customerContact||null,parsed.data.customerReference||null,parsed.data.customerNotes||null,
           dateOnly(subscriptionStart),parsed.data.subscriptionMonths,dateOnly(subscriptionEnd),parsed.data.warrantyDays,warrantyEnd?dateOnly(warrantyEnd):null,
           parsed.data.sellingPrice,unitCost,unitPaid,
+        ]);
+        await client.query(`INSERT INTO sales(id,organization_id,withdrawal_id,created_by,source,service_name,item_description,customer_name,customer_phone,quantity,total_amount,cost_amount,paid_amount,status,notes,sold_at)
+          VALUES($1,$2,$3,$4,'WITHDRAWAL',$5,$5,$6,$7,1,$8,$9,$10,'COMPLETED',$11,$12) ON CONFLICT(withdrawal_id) DO NOTHING`,[
+          `SALE-${withdrawalId}`,context.organizationId,withdrawalId,parsed.data.employeeId,serviceRow.rows[0]?.name??parsed.data.serviceId,
+          parsed.data.customerName,parsed.data.customerPhone||null,parsed.data.sellingPrice,unitCost,unitPaid,parsed.data.customerNotes||null,dateOnly(subscriptionStart)
         ]);
         const existingCredential=credentialMap.get(item.id);
         if(existingCredential){
@@ -186,6 +191,7 @@ export async function DELETE(request:Request){
         await client.query("UPDATE inventory_items SET current_usage=GREATEST(0,current_usage-1),status=CASE WHEN status='DISABLED' THEN 'DISABLED' WHEN GREATEST(0,current_usage-1)>=max_usage THEN 'FULL' ELSE 'AVAILABLE' END WHERE id=$1",[withdrawal.inventory_item_id]);
       }
       await client.query("UPDATE withdrawals SET status='RETURNED' WHERE id=$1",[withdrawal.id]);
+      await client.query("UPDATE sales SET status='CANCELLED',updated_at=NOW() WHERE withdrawal_id=$1",[withdrawal.id]);
       await client.query(`INSERT INTO activity_logs(id,organization_id,actor_id,action,entity_type,entity_id,metadata) VALUES ($1,$2,$3,'WITHDRAWAL_RETURN','WITHDRAWAL_BATCH',$4,$5)`,
         [crypto.randomUUID(),context.organizationId,context.session.id,withdrawal.id,JSON.stringify({inventoryItemId:withdrawal.inventory_item_id})]);
       return withdrawal.id;

@@ -29,6 +29,7 @@ import {
   PowerOff,
   RotateCcw,
   Search,
+  ShoppingCart,
   Settings as SettingsIcon,
   ShieldCheck,
   Sparkles,
@@ -52,6 +53,7 @@ type View =
   | "services"
   | "employees"
   | "reports"
+  | "sales"
   | "accounting"
   | "suppliers"
   | "activity"
@@ -65,6 +67,7 @@ const nav: { id: View; label: string; icon: LucideIcon }[] = [
   { id: "services", label: "الخدمات", icon: Layers3 },
   { id: "employees", label: "الموظفون", icon: UsersRound },
   { id: "reports", label: "التقارير", icon: FileBarChart },
+  { id: "sales", label: "المبيعات", icon: ShoppingCart },
   { id: "accounting", label: "المحاسبة", icon: Wallet },
   { id: "suppliers", label: "الموردين", icon: Truck },
   { id: "activity", label: "سجل النشاط", icon: History },
@@ -639,6 +642,7 @@ export default function Home() {
           )}
           {view === "employees" && <Employees flash={flash} />}
           {view === "reports" && <Reports />}
+          {view === "sales" && <Sales flash={flash} />}
           {view === "accounting" && <Accounting flash={flash} dataVersion={dataVersion} onChanged={() => setDataVersion((value) => value + 1)} />}
           {view === "suppliers" && <Suppliers flash={flash} />}
           {view === "activity" &&
@@ -2691,6 +2695,27 @@ function Reports() {
       </section>
     </>
   );
+}
+
+type SaleRow = { id:string; source:string; service_name:string|null; item_description:string; customer_name:string; customer_phone:string|null; quantity:number; total_amount:number; cost_amount:number; paid_amount:number; status:"COMPLETED"|"PENDING"|"CANCELLED"; notes:string|null; sold_at:string; created_by_name:string|null };
+const emptySale = () => ({ customerName:"",customerPhone:"",serviceName:"",itemDescription:"",quantity:1,totalAmount:0,costAmount:0,paidAmount:0,status:"COMPLETED" as SaleRow["status"],notes:"",soldAt:todayInCairo() });
+function Sales({flash}:{flash:(message:string)=>void}){
+  const [sales,setSales]=useState<SaleRow[]>([]);const [form,setForm]=useState(emptySale);const [editing,setEditing]=useState<string|null>(null);const [version,setVersion]=useState(0);const [saving,setSaving]=useState(false);
+  useEffect(()=>{fetch("/api/sales").then(r=>r.ok?r.json():Promise.reject()).then(d=>setSales(d.sales)).catch(()=>setSales([]));},[version]);
+  const total=sales.filter(s=>s.status!=="CANCELLED").reduce((n,s)=>n+Number(s.total_amount),0);const paid=sales.filter(s=>s.status!=="CANCELLED").reduce((n,s)=>n+Number(s.paid_amount),0);const profit=sales.filter(s=>s.status!=="CANCELLED").reduce((n,s)=>n+Number(s.total_amount)-Number(s.cost_amount),0);
+  async function save(){if(!form.customerName.trim()||!form.itemDescription.trim()){flash("اكتب اسم العميل وبيان المبيعة");return;}setSaving(true);const response=await fetch(`/api/sales${editing?`?id=${encodeURIComponent(editing)}`:""}`,{method:editing?"PATCH":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(form)});setSaving(false);if(!response.ok){flash("تعذر حفظ المبيعة");return;}setForm(emptySale());setEditing(null);setVersion(v=>v+1);flash(editing?"تم تعديل المبيعة":"تم تسجيل المبيعة");}
+  function edit(s:SaleRow){setEditing(s.id);setForm({customerName:s.customer_name,customerPhone:s.customer_phone??"",serviceName:s.service_name??"",itemDescription:s.item_description,quantity:Number(s.quantity),totalAmount:Number(s.total_amount),costAmount:Number(s.cost_amount),paidAmount:Number(s.paid_amount),status:s.status,notes:s.notes??"",soldAt:String(s.sold_at).slice(0,10)});window.scrollTo({top:0,behavior:"smooth"});}
+  async function remove(id:string){if(!window.confirm("حذف هذه المبيعة؟"))return;const r=await fetch(`/api/sales?id=${encodeURIComponent(id)}`,{method:"DELETE"});if(r.ok){setVersion(v=>v+1);flash("تم حذف المبيعة");}}
+  return <>
+    <PageHead title="المبيعات" subtitle="سجل موحد للمبيعات التلقائية من السحب والمبيعات اليدوية." />
+    <div className="metrics compact"><Metric icon={ShoppingCart} label="إجمالي المبيعات" value={`${total.toLocaleString("ar-EG")} ج.م`} change={`${sales.length} عملية`} note="يدوي وتلقائي" tone="blue"/><Metric icon={Wallet} label="المحصّل" value={`${paid.toLocaleString("ar-EG")} ج.م`} change={`${Math.max(0,total-paid).toLocaleString("ar-EG")} متبقي`} note="النقدية المحصلة" tone="green"/><Metric icon={TrendingUp} label="مجمل الربح" value={`${profit.toLocaleString("ar-EG")} ج.م`} change="قبل المصروفات" note="البيع − التكلفة" tone="purple"/></div>
+    <section className="panel salesEditor"><div className="panelHead"><div><h3>{editing?"تعديل المبيعة":"تسجيل مبيعة يدوية"}</h3><p>لا يشترط سحب حساب لتسجيل البيع.</p></div></div><div className="salesForm">
+      <label>العميل<input value={form.customerName} onChange={e=>setForm({...form,customerName:e.target.value})}/></label><label>الهاتف<input dir="ltr" value={form.customerPhone} onChange={e=>setForm({...form,customerPhone:e.target.value})}/></label><label>الخدمة / التصنيف<input value={form.serviceName} onChange={e=>setForm({...form,serviceName:e.target.value})}/></label><label>بيان المبيعة<input value={form.itemDescription} onChange={e=>setForm({...form,itemDescription:e.target.value})}/></label>
+      <label>الكمية<input type="number" min={1} value={form.quantity} onChange={e=>setForm({...form,quantity:Math.max(1,Number(e.target.value)||1)})}/></label><label>الإجمالي<input type="number" min={0} value={form.totalAmount||""} onChange={e=>setForm({...form,totalAmount:Math.max(0,Number(e.target.value)||0)})}/></label><label>التكلفة<input type="number" min={0} value={form.costAmount||""} onChange={e=>setForm({...form,costAmount:Math.max(0,Number(e.target.value)||0)})}/></label><label>المدفوع<input type="number" min={0} max={form.totalAmount} value={form.paidAmount||""} onChange={e=>setForm({...form,paidAmount:Math.min(form.totalAmount,Math.max(0,Number(e.target.value)||0))})}/></label>
+      <label>التاريخ<input type="date" value={form.soldAt} onChange={e=>setForm({...form,soldAt:e.target.value})}/></label><label>الحالة<select value={form.status} onChange={e=>setForm({...form,status:e.target.value as typeof form.status})}><option value="COMPLETED">مكتملة</option><option value="PENDING">معلقة</option><option value="CANCELLED">ملغاة</option></select></label><label className="wide">ملاحظات<input value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></label>
+    </div><footer>{editing&&<button className="secondary" onClick={()=>{setEditing(null);setForm(emptySale());}}>إلغاء التعديل</button>}<button className="primary" disabled={saving} onClick={save}>{saving?"جارٍ الحفظ...":editing?"حفظ التعديل":"تسجيل المبيعة"}</button></footer></section>
+    <section className="panel tablePanel"><div className="panelHead"><h3>سجل المبيعات</h3><button className="link" onClick={()=>downloadCsv("stockflow-sales.csv",[["الرقم","المصدر","العميل","الهاتف","البيان","الكمية","الإجمالي","التكلفة","المدفوع","الحالة","التاريخ"],...sales.map(s=>[s.id,s.source,s.customer_name,s.customer_phone,s.item_description,s.quantity,s.total_amount,s.cost_amount,s.paid_amount,s.status,s.sold_at])])}><Download size={14}/>تصدير</button></div><div className="tableWrap"><table><thead><tr><th>التاريخ</th><th>المصدر</th><th>العميل</th><th>البيان</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th/></tr></thead><tbody>{sales.map(s=><tr key={s.id}><td>{formatArabicDate(s.sold_at)}</td><td><span className="status">{s.source==="WITHDRAWAL"?"سحب":"يدوي"}</span></td><td><b>{s.customer_name}</b><small className="tableSubtext">{s.customer_phone}</small></td><td>{s.item_description}</td><td><b>{Number(s.total_amount).toLocaleString("ar-EG")}</b></td><td>{Number(s.paid_amount).toLocaleString("ar-EG")}</td><td>{Math.max(0,Number(s.total_amount)-Number(s.paid_amount)).toLocaleString("ar-EG")}</td><td>{s.status}</td><td><div className="rowActions"><button className="dots" onClick={()=>edit(s)}><Pencil size={13}/></button><button className="dots danger" onClick={()=>remove(s.id)}><Trash2 size={13}/></button></div></td></tr>)}</tbody></table></div></section>
+  </>;
 }
 
 type PeriodPreset = "today" | "7d" | "30d" | "month" | "all" | "custom";

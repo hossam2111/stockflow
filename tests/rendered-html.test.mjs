@@ -86,3 +86,18 @@ test("isolates every admin inventory operation to their own organization", async
   assert.match(inventory, /DELETE FROM inventory_items WHERE id=\$1 AND organization_id=\$2/);
   assert.match(inventory, /context\.organizationId,item\.serviceId,item\.email/);
 });
+
+test("records withdrawals in an editable sales ledger and supports manual sales", async () => {
+  const [page, sales, withdrawals, database] = await Promise.all([
+    read("app/page.tsx"), read("app/api/sales/route.ts"),
+    read("app/api/withdrawals/route.ts"), read("lib/db.ts"),
+  ]);
+  assert.match(page, /view === "sales"/);
+  assert.match(page, /method:editing\?"PATCH":"POST"/);
+  assert.match(sales, /requireWorkspaceAdmin/);
+  assert.match(sales, /source,service_name,item_description/);
+  assert.match(sales, /WHERE id=\$12 AND organization_id=\$13/);
+  assert.match(withdrawals, /INSERT INTO sales/);
+  assert.match(withdrawals, /'WITHDRAWAL'/);
+  assert.match(database, /CREATE TABLE IF NOT EXISTS sales/);
+});
