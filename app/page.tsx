@@ -227,20 +227,30 @@ const serviceRank = (name: string) => serviceOrder.get(name) ?? Number.MAX_SAFE_
 
 function downloadCsv(filename: string, rows: (string | number | boolean | null | undefined)[][]) {
   const safeCell = (value: string | number | boolean | null | undefined) => {
-    const text = String(value ?? "");
+    if (value === null || value === undefined) return '""';
+    const text = String(value);
+    const trimmed = text.trim();
+
+    // Prevent Excel from converting phone numbers, IDs or numeric strings (e.g. 01011111111)
+    // into scientific notation (1.01E+09) or stripping leading zeros by wrapping as Excel text formula
+    if (/^0\d+$|^\+?\d{8,}$/.test(trimmed)) {
+      return `="` + trimmed.replaceAll('"', '""') + `"`;
+    }
+
     const excelSafe = /^[=+\-@]/.test(text) ? `'${text}` : text;
-    return `"${excelSafe.replaceAll('"', '""')}"`;
+    return `"` + excelSafe.replaceAll('"', '""') + `"`;
   };
-  // UTF-8 BOM preserves Arabic, and Excel's sep directive overrides Windows locale delimiters.
-  const csv = `sep=,\r\n${rows.map((row) => row.map(safeCell).join(",")).join("\r\n")}`;
-  const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
+
+  // Standard UTF-8 CSV string with BOM (\ufeff) without the sep= line that causes garbled Arabic in Excel.
+  const csv = rows.map((row) => row.map(safeCell).join(",")).join("\r\n");
+  const blob = new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  // Revoke on the next tick \u2014 revoking synchronously cancels the download and yields an empty file.
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
