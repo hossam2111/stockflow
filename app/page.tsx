@@ -15,6 +15,7 @@ import {
   ClipboardCopy,
   Download,
   FileBarChart,
+  FileText,
   History,
   Layers3,
   LayoutDashboard,
@@ -252,6 +253,108 @@ function downloadCsv(filename: string, rows: (string | number | boolean | null |
   link.click();
   document.body.removeChild(link);
   setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+function exportToExcel(filename: string, title: string, headers: string[], rows: (string | number | boolean | null | undefined)[][]) {
+  const sanitize = (val: unknown) => String(val ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const headerHtml = headers.map((h) => `<th style="background:#1e293b;color:#ffffff;font-weight:bold;border:1px solid #cbd5e1;padding:10px 14px;text-align:center;">${sanitize(h)}</th>`).join("");
+  const rowsHtml = rows.map((row, idx) => {
+    const bg = idx % 2 === 0 ? "#ffffff" : "#f8fafc";
+    const cells = row.map((cell) => {
+      const text = String(cell ?? "");
+      return `<td style="border:1px solid #cbd5e1;padding:8px 12px;text-align:center;mso-number-format:'\\@';">${sanitize(text)}</td>`;
+    }).join("");
+    return `<tr style="background:${bg};">${cells}</tr>`;
+  }).join("");
+
+  const template = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
+<x:Name>${sanitize(title)}</x:Name>
+<x:WorksheetOptions><x:DisplayRightToLeft/></x:WorksheetOptions>
+</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+<style>
+  body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; direction: rtl; }
+  table { border-collapse: collapse; width: 100%; margin-top: 15px; }
+  .title { font-size: 18px; font-weight: bold; color: #0f172a; margin-bottom: 5px; }
+  .meta { font-size: 12px; color: #64748b; margin-bottom: 15px; }
+</style>
+</head>
+<body>
+  <div class="title">StockFlow — ${sanitize(title)}</div>
+  <div class="meta">تاريخ التصدير: ${new Date().toLocaleString("ar-EG")}</div>
+  <table>
+    <thead><tr>${headerHtml}</tr></thead>
+    <tbody>${rowsHtml}</tbody>
+  </table>
+</body>
+</html>`;
+
+  const blob = new Blob(["\ufeff", template], { type: "application/vnd.ms-excel;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  const name = filename.endsWith(".xls") ? filename : `${filename.replace(/\.csv$/, "")}.xls`;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+function exportToPdf(title: string, headers: string[], rows: (string | number | boolean | null | undefined)[][]) {
+  const sanitize = (val: unknown) => String(val ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const headerHtml = headers.map((h) => `<th>${sanitize(h)}</th>`).join("");
+  const rowsHtml = rows.map((row) => `<tr>${row.map((cell) => `<td>${sanitize(cell)}</td>`).join("")}</tr>`).join("");
+
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) return;
+
+  printWindow.document.write(`<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>StockFlow — ${sanitize(title)}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
+  * { box-sizing: border-box; }
+  body { font-family: 'Cairo', system-ui, -apple-system, sans-serif; direction: rtl; background: #ffffff; color: #0f172a; margin: 0; padding: 25px; }
+  header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #2563eb; padding-bottom: 15px; margin-bottom: 20px; }
+  .brand { font-size: 26px; font-weight: 800; color: #2563eb; letter-spacing: -0.5px; }
+  .brand span { color: #0f172a; }
+  .meta { text-align: left; font-size: 13px; color: #64748b; line-height: 1.5; }
+  h1 { font-size: 20px; font-weight: 700; color: #1e293b; margin: 0 0 15px 0; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th { background-color: #1e293b; color: #ffffff; font-size: 13px; font-weight: 700; padding: 10px 12px; border: 1px solid #cbd5e1; text-align: center; }
+  td { font-size: 12px; padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155; }
+  tr:nth-child(even) { background-color: #f8fafc; }
+  footer { margin-top: 35px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 15px; }
+  @media print {
+    body { padding: 0; }
+    @page { size: A4 landscape; margin: 12mm; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand">Stock<span>Flow</span></div>
+    <div class="meta">تاريخ التتقرير: ${new Date().toLocaleString("ar-EG")}<br>إدارة المخزون بذكاء</div>
+  </header>
+  <h1>${sanitize(title)}</h1>
+  <table>
+    <thead><tr>${headerHtml}</tr></thead>
+    <tbody>${rowsHtml}</tbody>
+  </table>
+  <footer>تقرير مستخرج تلقائيًا من منصة StockFlow</footer>
+  <script>
+    window.onload = function() {
+      setTimeout(function() { window.print(); }, 400);
+    };
+  </script>
+</body>
+</html>`);
+  printWindow.document.close();
 }
 
 function addMonthsToDate(value: string, months: number) {
@@ -1548,7 +1651,9 @@ function Inventory({
         title="المخزون"
         subtitle="إدارة كل الحسابات والاشتراكات من مكان واحد."
       >
-        <button className="secondary" onClick={() => { onExport(); flash("تم تنزيل ملف المخزون"); }}><Download size={15} /> تصدير CSV</button>
+        <button className="secondary" onClick={() => { exportToExcel("stockflow-inventory.xls", "تقرير المخزون الشامل", ["رقم العنصر","الخدمة","الإيميل","النوع","الاستخدام","الحالة","تاريخ الإضافة"], visibleRows.map((row) => [row.id,row.service,row.account,row.type,row.usage,row.status,row.added])); flash("تم تصدير ملف Excel للمخزون"); }}><Download size={15} /> تصدير Excel</button>
+        <button className="secondary" onClick={() => { exportToPdf("تقرير المخزون الشامل", ["رقم العنصر","الخدمة","الإيميل","النوع","الاستخدام","الحالة","تاريخ الإضافة"], visibleRows.map((row) => [row.id,row.service,row.account,row.type,row.usage,row.status,row.added])); flash("فتح تقرير PDF للمخزون"); }}><FileText size={15} /> تصدير PDF</button>
+        <button className="secondary" onClick={() => { onExport(); flash("تم تنزيل ملف CSV للمخزون"); }}><Download size={15} /> CSV</button>
         <button className="primary" onClick={onImport}>
           <Plus size={16} /> رفع بيانات الحسابات
         </button>
@@ -1613,7 +1718,8 @@ function Inventory({
           <div className="bulkBar">
             <span>تم تحديد {selectedCount} حساب</span>
             <div>
-              <button onClick={() => downloadCsv("stockflow-inventory-selected.csv", [["ID","Service","Email","Type","Usage","Status","Added"], ...visibleRows.filter((row) => selectedIds.has(row.id)).map((row) => [row.id,row.service,row.account,row.type,row.usage,row.status,row.added])])}><Download size={14} /> تصدير المحدد</button>
+              <button onClick={() => exportToExcel("stockflow-inventory-selected.xls", "المخزون المحدد", ["رقم العنصر","الخدمة","الإيميل","النوع","الاستخدام","الحالة","تاريخ الإضافة"], visibleRows.filter((row) => selectedIds.has(row.id)).map((row) => [row.id,row.service,row.account,row.type,row.usage,row.status,row.added]))}><Download size={14} /> Excel المحدد</button>
+              <button onClick={() => exportToPdf("المخزون المحدد", ["رقم العنصر","الخدمة","الإيميل","النوع","الاستخدام","الحالة","تاريخ الإضافة"], visibleRows.filter((row) => selectedIds.has(row.id)).map((row) => [row.id,row.service,row.account,row.type,row.usage,row.status,row.added]))}><FileText size={14} /> PDF المحدد</button>
               <button className="danger" disabled={bulkBusy} onClick={bulkDelete}><Trash2 size={14} /> حذف المحدد</button>
               <button onClick={() => setSelectedIds(new Set())}>إلغاء التحديد</button>
             </div>
@@ -2581,7 +2687,21 @@ function Reports() {
         title="التقارير"
         subtitle="حوّل بيانات المخزون والفريق إلى قرارات واضحة."
       >
-        <button className="primary" onClick={() => downloadCsv("stockflow-withdrawals-full.csv", [[
+        <button className="secondary" onClick={() => exportToExcel("stockflow-withdrawals-report.xls", "تقرير عمليات السحب والاشتراكات التفصيلي", [
+          "رقم العملية", "رقم الدفعة", "الموظف", "الخدمة", "رقم المخزون", "نوع الحساب", "إيميل الحساب", "كلمة مرور الحساب", "مفتاح OTP", "رابط OTP",
+          "اسم العميل", "هاتف العميل", "وسيلة التواصل", "مرجع العميل", "ملاحظات العميل", "بداية الاشتراك", "عدد الشهور", "نهاية الاشتراك", "أيام الضمان", "نهاية الضمان",
+          "سعر البيع", "التكلفة", "المدفوع", "المتبقي", "الاستخدام قبل السحب", "الاستخدام بعد السحب", "حالة العملية", "تاريخ السحب"
+        ], visible.map((row) => [
+          String(row.id), String(row.batch_id ?? ""), String(row.employee ?? ""), String(row.service ?? ""), String(row.inventory_item_id ?? ""), String(row.account_type ?? ""), String(row.account_email ?? ""), String(row.account_password ?? ""), String(row.otp_secret ?? ""), String(row.otp_url ?? ""),
+          String(row.customer_name ?? ""), String(row.customer_phone ?? ""), String(row.customer_contact ?? ""), String(row.customer_reference ?? ""), String(row.customer_notes ?? ""), String(row.subscription_start_date ?? ""), Number(row.subscription_months ?? 0), String(row.subscription_end_date ?? ""), Number(row.warranty_days ?? 0), String(row.warranty_end_date ?? ""),
+          Number(row.selling_price ?? 0), Number(row.cost ?? 0), Number(row.paid_amount ?? 0), Number(row.remaining ?? 0), Number(row.previous_usage ?? 0), Number(row.new_usage ?? 0), String(row.status ?? ""), String(row.created_at ?? "")
+        ]))}><Download size={15} /> تصدير Excel</button>
+        <button className="primary" onClick={() => exportToPdf("تقرير عمليات السحب والاشتراكات التفصيلي", [
+          "رقم العملية", "الموظف", "الخدمة", "اسم العميل", "هاتف العميل", "بداية الاشتراك", "نهاية الاشتراك", "سعر البيع", "المدفوع", "الحالة"
+        ], visible.map((row) => [
+          String(row.id), String(row.employee ?? ""), String(row.service ?? ""), String(row.customer_name ?? "—"), String(row.customer_phone ?? "—"), String(row.subscription_start_date ?? "—"), String(row.subscription_end_date ?? "—"), Number(row.selling_price ?? 0), Number(row.paid_amount ?? 0), String(row.status ?? "")
+        ]))}><FileText size={15} /> تصدير PDF</button>
+        <button className="secondary" onClick={() => downloadCsv("stockflow-withdrawals-full.csv", [[
           "رقم العملية", "رقم الدفعة", "الموظف", "الخدمة", "رقم المخزون", "نوع الحساب", "إيميل الحساب", "كلمة مرور الحساب", "مفتاح OTP", "رابط OTP",
           "اسم العميل", "هاتف العميل", "وسيلة التواصل", "مرجع العميل", "ملاحظات العميل", "بداية الاشتراك", "عدد الشهور", "نهاية الاشتراك", "أيام الضمان", "نهاية الضمان",
           "سعر البيع", "التكلفة", "المدفوع", "المتبقي", "الاستخدام قبل السحب", "الاستخدام بعد السحب", "حالة العملية", "تاريخ السحب"
@@ -2589,7 +2709,7 @@ function Reports() {
           String(row.id), String(row.batch_id ?? ""), String(row.employee ?? ""), String(row.service ?? ""), String(row.inventory_item_id ?? ""), String(row.account_type ?? ""), String(row.account_email ?? ""), String(row.account_password ?? ""), String(row.otp_secret ?? ""), String(row.otp_url ?? ""),
           String(row.customer_name ?? ""), String(row.customer_phone ?? ""), String(row.customer_contact ?? ""), String(row.customer_reference ?? ""), String(row.customer_notes ?? ""), String(row.subscription_start_date ?? ""), Number(row.subscription_months ?? 0), String(row.subscription_end_date ?? ""), Number(row.warranty_days ?? 0), String(row.warranty_end_date ?? ""),
           Number(row.selling_price ?? 0), Number(row.cost ?? 0), Number(row.paid_amount ?? 0), Number(row.remaining ?? 0), Number(row.previous_usage ?? 0), Number(row.new_usage ?? 0), String(row.status ?? ""), String(row.created_at ?? "")
-        ])])}><Download size={15} /> تصدير التقرير الكامل</button>
+        ])])}><Download size={15} /> CSV</button>
       </PageHead>
       <PeriodFilter preset={preset} setPreset={setPreset} custom={custom} setCustom={setCustom} />
       <div className="reportFilters panel">
@@ -2724,7 +2844,7 @@ function Sales({flash}:{flash:(message:string)=>void}){
       <label>الكمية<input type="number" min={1} value={form.quantity} onChange={e=>setForm({...form,quantity:Math.max(1,Number(e.target.value)||1)})}/></label><label>الإجمالي<input type="number" min={0} value={form.totalAmount||""} onChange={e=>setForm({...form,totalAmount:Math.max(0,Number(e.target.value)||0)})}/></label><label>التكلفة<input type="number" min={0} value={form.costAmount||""} onChange={e=>setForm({...form,costAmount:Math.max(0,Number(e.target.value)||0)})}/></label><label>المدفوع<input type="number" min={0} max={form.totalAmount} value={form.paidAmount||""} onChange={e=>setForm({...form,paidAmount:Math.min(form.totalAmount,Math.max(0,Number(e.target.value)||0))})}/></label>
       <label>التاريخ<input type="date" value={form.soldAt} onChange={e=>setForm({...form,soldAt:e.target.value})}/></label><label>الحالة<select value={form.status} onChange={e=>setForm({...form,status:e.target.value as typeof form.status})}><option value="COMPLETED">مكتملة</option><option value="PENDING">معلقة</option><option value="CANCELLED">ملغاة</option></select></label><label className="wide">ملاحظات<input value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></label>
     </div><footer>{editing&&<button className="secondary" onClick={()=>{setEditing(null);setForm(emptySale());}}>إلغاء التعديل</button>}<button className="primary" disabled={saving} onClick={save}>{saving?"جارٍ الحفظ...":editing?"حفظ التعديل":"تسجيل المبيعة"}</button></footer></section>
-    <section className="panel tablePanel"><div className="panelHead"><h3>سجل المبيعات</h3><button className="link" onClick={()=>downloadCsv("stockflow-sales.csv",[["الرقم","المصدر","العميل","الهاتف","البيان","الكمية","الإجمالي","التكلفة","المدفوع","الحالة","التاريخ"],...sales.map(s=>[s.id,s.source,s.customer_name,s.customer_phone,s.item_description,s.quantity,s.total_amount,s.cost_amount,s.paid_amount,s.status,s.sold_at])])}><Download size={14}/>تصدير</button></div><div className="tableWrap"><table><thead><tr><th>التاريخ</th><th>المصدر</th><th>العميل</th><th>البيان</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th/></tr></thead><tbody>{sales.map(s=><tr key={s.id}><td>{formatArabicDate(s.sold_at)}</td><td><span className="status">{s.source==="WITHDRAWAL"?"سحب":"يدوي"}</span></td><td><b>{s.customer_name}</b><small className="tableSubtext">{s.customer_phone}</small></td><td>{s.item_description}</td><td><b>{Number(s.total_amount).toLocaleString("ar-EG")}</b></td><td>{Number(s.paid_amount).toLocaleString("ar-EG")}</td><td>{Math.max(0,Number(s.total_amount)-Number(s.paid_amount)).toLocaleString("ar-EG")}</td><td>{s.status}</td><td><div className="rowActions"><button className="dots" onClick={()=>edit(s)}><Pencil size={13}/></button><button className="dots danger" onClick={()=>remove(s.id)}><Trash2 size={13}/></button></div></td></tr>)}</tbody></table></div></section>
+    <section className="panel tablePanel"><div className="panelHead"><h3>سجل المبيعات</h3><div style={{ display: "flex", gap: "0.5rem" }}><button className="link" onClick={()=>exportToExcel("stockflow-sales.xls", "سجل المبيعات والتسويات", ["الرقم","المصدر","العميل","الهاتف","البيان","الكمية","الإجمالي","التكلفة","المدفوع","الحالة","التاريخ"], sales.map(s=>[s.id,s.source,s.customer_name,s.customer_phone,s.item_description,s.quantity,s.total_amount,s.cost_amount,s.paid_amount,s.status,s.sold_at]))}><Download size={14}/> Excel</button><button className="link" onClick={()=>exportToPdf("سجل المبيعات والتسويات", ["التاريخ","المصدر","العميل","الهاتف","البيان","الإجمالي","المدفوع","المتبقي","الحالة"], sales.map(s=>[formatArabicDate(s.sold_at), s.source==="WITHDRAWAL"?"سحب":"يدوي", s.customer_name, s.customer_phone??"—", s.item_description, Number(s.total_amount), Number(s.paid_amount), Math.max(0,Number(s.total_amount)-Number(s.paid_amount)), s.status]))}><FileText size={14}/> PDF</button><button className="link" onClick={()=>downloadCsv("stockflow-sales.csv",[["الرقم","المصدر","العميل","الهاتف","البيان","الكمية","الإجمالي","التكلفة","المدفوع","الحالة","التاريخ"],...sales.map(s=>[s.id,s.source,s.customer_name,s.customer_phone,s.item_description,s.quantity,s.total_amount,s.cost_amount,s.paid_amount,s.status,s.sold_at])])}><Download size={14}/> CSV</button></div></div><div className="tableWrap"><table><thead><tr><th>التاريخ</th><th>المصدر</th><th>العميل</th><th>البيان</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th/></tr></thead><tbody>{sales.map(s=><tr key={s.id}><td>{formatArabicDate(s.sold_at)}</td><td><span className="status">{s.source==="WITHDRAWAL"?"سحب":"يدوي"}</span></td><td><b>{s.customer_name}</b><small className="tableSubtext">{s.customer_phone}</small></td><td>{s.item_description}</td><td><b>{Number(s.total_amount).toLocaleString("ar-EG")}</b></td><td>{Number(s.paid_amount).toLocaleString("ar-EG")}</td><td>{Math.max(0,Number(s.total_amount)-Number(s.paid_amount)).toLocaleString("ar-EG")}</td><td>{s.status}</td><td><div className="rowActions"><button className="dots" onClick={()=>edit(s)}><Pencil size={13}/></button><button className="dots danger" onClick={()=>remove(s.id)}><Trash2 size={13}/></button></div></td></tr>)}</tbody></table></div></section>
   </>;
 }
 
@@ -2807,7 +2927,9 @@ function Accounting({ flash, dataVersion, onChanged }: { flash: (s: string) => v
   return (
     <>
       <PageHead title="المحاسبة" subtitle="الإيرادات والتكلفة والأرباح والمصروفات وديون العملاء خلال الفترة.">
-        <button className="secondary" onClick={() => downloadCsv("stockflow-accounting.csv", [["المؤشر", "القيمة (ج.م)"], ["الإيراد", s?.revenue ?? 0], ["المحصّل", s?.collected ?? 0], ["التكلفة", s?.cost ?? 0], ["مجمل الربح", s?.grossProfit ?? 0], ["المصروفات", s?.expenses ?? 0], ["صافي الربح", s?.netProfit ?? 0], ["الخزينة", s?.treasury ?? 0], ["مستحقات العملاء", s?.outstanding ?? 0]])}><Download size={15} /> تصدير ملخص</button>
+        <button className="secondary" onClick={() => exportToExcel("stockflow-accounting.xls", "ملخص تقرير المحاسبة والخزنة", ["المؤشر", "القيمة (ج.م)"], [["الإيراد", s?.revenue ?? 0], ["المحصّل", s?.collected ?? 0], ["التكلفة", s?.cost ?? 0], ["مجمل الربح", s?.grossProfit ?? 0], ["المصروفات", s?.expenses ?? 0], ["صافي الربح", s?.netProfit ?? 0], ["الخزينة", s?.treasury ?? 0], ["مستحقات العملاء", s?.outstanding ?? 0]])}><Download size={15} /> تصدير Excel</button>
+        <button className="secondary" onClick={() => exportToPdf("تقرير المحاسبة والخزنة والربحية", ["المؤشر", "القيمة (ج.م)"], [["الإيراد", s?.revenue ?? 0], ["المحصّل", s?.collected ?? 0], ["التكلفة", s?.cost ?? 0], ["مجمل الربح", s?.grossProfit ?? 0], ["المصروفات", s?.expenses ?? 0], ["صافي الربح", s?.netProfit ?? 0], ["الخزينة", s?.treasury ?? 0], ["مستحقات العملاء", s?.outstanding ?? 0]])}><FileText size={15} /> تصدير PDF</button>
+        <button className="secondary" onClick={() => downloadCsv("stockflow-accounting.csv", [["المؤشر", "القيمة (ج.م)"], ["الإيراد", s?.revenue ?? 0], ["المحصّل", s?.collected ?? 0], ["التكلفة", s?.cost ?? 0], ["مجمل الربح", s?.grossProfit ?? 0], ["المصروفات", s?.expenses ?? 0], ["صافي الربح", s?.netProfit ?? 0], ["الخزينة", s?.treasury ?? 0], ["مستحقات العملاء", s?.outstanding ?? 0]])}><Download size={15} /> CSV</button>
       </PageHead>
       <PeriodFilter preset={preset} setPreset={setPreset} custom={custom} setCustom={setCustom} />
       <div className="metrics">
