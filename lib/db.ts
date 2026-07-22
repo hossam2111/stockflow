@@ -5,8 +5,19 @@ declare global {
   var stockflowPool: Pool | undefined;
   var stockflowReady: Promise<void> | undefined;
   var stockflowMigrationReady: Promise<void> | undefined;
+  var stockflowCatalogueReady: Promise<void> | undefined;
   var stockflowMemory: boolean | undefined;
 }
+
+// Single source of truth for the platform-wide service catalogue, in display order. Adding a service
+// here (and bumping CATALOGUE_MARKER) makes it apply to EVERY organization on the next startup.
+export const serviceCatalogue: [string, number][] = [
+  ["Google Gemini", 5], ["ChatGPT Plus", 10], ["CapCut Pro", 5], ["Grok", 4],
+  ["Canva Pro", 4], ["Claude Pro", 4], ["Perplexity", 4], ["Midjourney", 3],
+  ["Adobe CC", 5], ["Spotify Premium", 10], ["Netflix Premium", 8], ["YouTube Premium", 8],
+  ["Disney+", 6], ["Shahid VIP", 6], ["Duolingo Super", 5], ["GitHub Copilot", 12], ["Microsoft 365", 6],
+];
+const CATALOGUE_MARKER = "services-catalogue-v1";
 
 const schema = [
   `CREATE TABLE IF NOT EXISTS organizations (
@@ -278,6 +289,31 @@ export async function ensureDb() {
     await globalThis.stockflowMigrationReady;
   } catch (error) {
     globalThis.stockflowMigrationReady = undefined;
+    throw error;
+  }
+  // Keep the service catalogue in sync across ALL organizations. Gated by a version marker so it runs
+  // once per catalogue version (bump CATALOGUE_MARKER when serviceCatalogue changes to re-sync).
+  if (!globalThis.stockflowCatalogueReady) {
+    globalThis.stockflowCatalogueReady = (async () => {
+      const pool = getPool();
+      const marker = await pool.query("SELECT 1 FROM activity_logs WHERE id=$1 LIMIT 1", [CATALOGUE_MARKER]);
+      if (marker.rows.length > 0) return;
+      const orgs = await pool.query<{ id: string }>("SELECT id FROM organizations");
+      for (const org of orgs.rows) {
+        for (const [name, limit] of serviceCatalogue) {
+          await pool.query(
+            `INSERT INTO services(id,organization_id,name,default_daily_limit) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+            [`svc-${crypto.randomUUID().slice(0, 8)}`, org.id, name, limit],
+          );
+        }
+      }
+      await pool.query("INSERT INTO activity_logs(id,action,metadata) VALUES ($1,'CATALOGUE_SYNC','{}') ON CONFLICT DO NOTHING", [CATALOGUE_MARKER]);
+    })();
+  }
+  try {
+    await globalThis.stockflowCatalogueReady;
+  } catch (error) {
+    globalThis.stockflowCatalogueReady = undefined;
     throw error;
   }
 }

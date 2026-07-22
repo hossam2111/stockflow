@@ -65,67 +65,27 @@ const nav: { id: View; label: string; icon: LucideIcon }[] = [
   { id: "settings", label: "الإعدادات", icon: SettingsIcon },
 ];
 
+// Canonical service catalogue. The array order is also the display order across the app
+// (Google, ChatGPT, CapCut, Grok, then the rest). stock/used/total are cosmetic fallbacks
+// used only before live inventory data loads; real numbers come from /api/services.
 const services = [
-  {
-    name: "ChatGPT Plus",
-    code: "GPT",
-    color: "#111827",
-    stock: 84,
-    used: 68,
-    total: 152,
-    type: "مشترك",
-    price: 450,
-  },
-  {
-    name: "Adobe CC",
-    code: "Ai",
-    color: "#ef4444",
-    stock: 12,
-    used: 42,
-    total: 54,
-    type: "فردي",
-    price: 620,
-  },
-  {
-    name: "Canva Pro",
-    code: "Ca",
-    color: "#8b5cf6",
-    stock: 38,
-    used: 71,
-    total: 109,
-    type: "مشترك",
-    price: 180,
-  },
-  {
-    name: "Claude Pro",
-    code: "Cl",
-    color: "#d97706",
-    stock: 7,
-    used: 29,
-    total: 36,
-    type: "فردي",
-    price: 500,
-  },
-  {
-    name: "Perplexity",
-    code: "Px",
-    color: "#0f766e",
-    stock: 25,
-    used: 20,
-    total: 45,
-    type: "مشترك",
-    price: 280,
-  },
-  {
-    name: "Midjourney",
-    code: "Mj",
-    color: "#2563eb",
-    stock: 19,
-    used: 31,
-    total: 50,
-    type: "فردي",
-    price: 350,
-  },
+  { name: "Google Gemini", code: "Gm", color: "#4285F4", stock: 0, used: 0, total: 0, type: "فردي", price: 300 },
+  { name: "ChatGPT Plus", code: "GPT", color: "#111827", stock: 0, used: 0, total: 0, type: "مشترك", price: 450 },
+  { name: "CapCut Pro", code: "Cp", color: "#0EA5E9", stock: 0, used: 0, total: 0, type: "مشترك", price: 200 },
+  { name: "Grok", code: "Gk", color: "#4B5563", stock: 0, used: 0, total: 0, type: "فردي", price: 350 },
+  { name: "Canva Pro", code: "Ca", color: "#8b5cf6", stock: 0, used: 0, total: 0, type: "مشترك", price: 180 },
+  { name: "Claude Pro", code: "Cl", color: "#d97706", stock: 0, used: 0, total: 0, type: "فردي", price: 500 },
+  { name: "Perplexity", code: "Px", color: "#0f766e", stock: 0, used: 0, total: 0, type: "مشترك", price: 280 },
+  { name: "Midjourney", code: "Mj", color: "#2563eb", stock: 0, used: 0, total: 0, type: "فردي", price: 350 },
+  { name: "Adobe CC", code: "Ai", color: "#ef4444", stock: 0, used: 0, total: 0, type: "فردي", price: 620 },
+  { name: "Spotify Premium", code: "Sp", color: "#1DB954", stock: 0, used: 0, total: 0, type: "مشترك", price: 120 },
+  { name: "Netflix Premium", code: "Nf", color: "#E50914", stock: 0, used: 0, total: 0, type: "مشترك", price: 250 },
+  { name: "YouTube Premium", code: "Yt", color: "#FF0000", stock: 0, used: 0, total: 0, type: "مشترك", price: 150 },
+  { name: "Disney+", code: "Ds", color: "#113CCF", stock: 0, used: 0, total: 0, type: "مشترك", price: 200 },
+  { name: "Shahid VIP", code: "Sh", color: "#00A8E1", stock: 0, used: 0, total: 0, type: "مشترك", price: 130 },
+  { name: "Duolingo Super", code: "Du", color: "#58CC02", stock: 0, used: 0, total: 0, type: "فردي", price: 160 },
+  { name: "GitHub Copilot", code: "Gh", color: "#24292E", stock: 0, used: 0, total: 0, type: "فردي", price: 300 },
+  { name: "Microsoft 365", code: "Ms", color: "#D83B01", stock: 0, used: 0, total: 0, type: "فردي", price: 220 },
 ];
 
 type InventoryRow = {
@@ -243,9 +203,15 @@ type EmployeeAccessStats = {
 };
 
 const serviceIds: Record<string, string> = {
-  "ChatGPT Plus": "chatgpt", "Adobe CC": "adobe", "Canva Pro": "canva",
-  "Claude Pro": "claude", Perplexity: "perplexity", Midjourney: "midjourney",
+  "Google Gemini": "google", "ChatGPT Plus": "chatgpt", "CapCut Pro": "capcut", Grok: "grok",
+  "Canva Pro": "canva", "Claude Pro": "claude", Perplexity: "perplexity", Midjourney: "midjourney",
+  "Adobe CC": "adobe", "Spotify Premium": "spotify", "Netflix Premium": "netflix",
+  "YouTube Premium": "youtube", "Disney+": "disney", "Shahid VIP": "shahid",
+  "Duolingo Super": "duolingo", "GitHub Copilot": "github", "Microsoft 365": "microsoft365",
 };
+// Canonical display order = order of the `services` catalogue above. Unknown services sort to the end.
+const serviceOrder = new Map(services.map((service, index) => [service.name, index]));
+const serviceRank = (name: string) => serviceOrder.get(name) ?? Number.MAX_SAFE_INTEGER;
 
 function downloadCsv(filename: string, rows: (string | number | boolean | null | undefined)[][]) {
   const csv = rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n");
@@ -350,7 +316,7 @@ export default function Home() {
         price: visual?.price ?? 0,
       };
     });
-    const source = live.length ? live : services;
+    const source = (live.length ? live : services).slice().sort((a, b) => serviceRank(a.name) - serviceRank(b.name) || a.name.localeCompare(b.name, "ar"));
     if (role !== "employee") return source;
     return source.filter((service) => {
       const id = serviceData.find((record) => record.name === service.name)?.id ?? serviceIds[service.name];
@@ -364,6 +330,7 @@ export default function Home() {
   useEffect(() => {
     if (!loggedIn) return;
     fetch("/api/services").then((r) => r.ok ? r.json() : Promise.reject()).then((data) => {
+      data.services = (data.services as ServiceRecord[]).slice().sort((a, b) => serviceRank(a.name) - serviceRank(b.name) || a.name.localeCompare(b.name, "ar"));
       setServiceData(data.services);
       const selected = data.services.find((s: ServiceRecord) => s.name === selectedService.name);
       if (selected) setSelectedService((current) => ({
@@ -1718,6 +1685,7 @@ function ImportModal({
   const [rows, setRows] = useState("");
   const [serviceName,setServiceName]=useState(defaultService);
   const [accountType,setAccountType]=useState<"SHARED"|"INDIVIDUAL">("INDIVIDUAL");
+  const [sharedMaxUsage,setSharedMaxUsage]=useState(5);
   const [saving,setSaving]=useState(false);
   const [fileName, setFileName] = useState("");
   const [fileError, setFileError] = useState("");
@@ -1765,7 +1733,7 @@ function ImportModal({
   async function importAccounts(){
     if (!count || invalidCount) { flash("راجع الإيميل والباسورد ورابط OTP في الصفوف غير الصحيحة"); return; }
     const selectedId = serviceRecords.find((service) => service.name === serviceName)?.id ?? serviceIds[serviceName];
-    const items=validRows.map(([email,password,otpSecret,otpUrl])=>({serviceId:selectedId,email,password,otpSecret:otpSecret||null,otpUrl:otpUrl||null,accountType,maxUsage:accountType==="SHARED"?5:1}));
+    const items=validRows.map(([email,password,otpSecret,otpUrl])=>({serviceId:selectedId,email,password,otpSecret:otpSecret||null,otpUrl:otpUrl||null,accountType,maxUsage:accountType==="SHARED"?Math.max(1,Math.min(100,sharedMaxUsage)):1}));
     setSaving(true);
     try {
       const response=await fetch("/api/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items})});
@@ -1807,6 +1775,13 @@ function ImportModal({
               <option value="INDIVIDUAL">فردي</option>
             </select>
           </label>
+          {accountType === "SHARED" && (
+            <label>
+              عدد مرات السحب (سعة الحساب المشترك)
+              <input type="number" min={1} max={100} value={sharedMaxUsage} onChange={(e) => setSharedMaxUsage(Math.max(1, Math.min(100, Number(e.target.value) || 1)))} />
+              <small>سيظهر الحساب المشترك في السحب حتى يُستخدم {Math.max(1, Math.min(100, sharedMaxUsage))} مرة، ثم يُصبح ممتلئًا.</small>
+            </label>
+          )}
         </div>
         <div className="fieldMap">
           <div>

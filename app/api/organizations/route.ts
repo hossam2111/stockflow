@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
-import { query, transaction } from "@/lib/db";
+import { query, transaction, serviceCatalogue } from "@/lib/db";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 
@@ -37,8 +37,7 @@ export async function POST(request:Request){
       await client.query(`INSERT INTO organizations(id,name,slug,employee_limit,inventory_limit,plan) VALUES ($1,$2,$3,$4,$5,$6)`,[orgId,data.name,data.slug,data.employeeLimit,data.inventoryLimit,data.plan]);
       await client.query(`INSERT INTO users(id,email,password_hash,name,role,organization_id,is_super_admin,team,active,daily_limit)
         VALUES ($1,$2,$3,$4,'ADMIN',$5,FALSE,'الإدارة',TRUE,999)`,[adminId,data.adminEmail.toLowerCase(),passwordHash,data.adminName,orgId]);
-      const defaults=[["ChatGPT Plus",10],["Adobe CC",5],["Canva Pro",4],["Claude Pro",4],["Perplexity",4],["Midjourney",3]];
-      for(const [name,limit] of defaults)await client.query(`INSERT INTO services(id,organization_id,name,default_daily_limit) VALUES ($1,$2,$3,$4)`,[`svc-${crypto.randomUUID().slice(0,8)}`,orgId,name,limit]);
+      for(const [name,limit] of serviceCatalogue)await client.query(`INSERT INTO services(id,organization_id,name,default_daily_limit) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,[`svc-${crypto.randomUUID().slice(0,8)}`,orgId,name,limit]);
       await client.query(`INSERT INTO activity_logs(id,organization_id,actor_id,action,entity_type,entity_id,metadata) VALUES ($1,$2,$3,'ORGANIZATION_CREATED','ORGANIZATION',$2,$4)`,[crypto.randomUUID(),orgId,session.id,JSON.stringify({name:data.name,adminEmail:data.adminEmail})]);
     });
     return NextResponse.json({organization:{id:orgId,name:data.name,slug:data.slug,adminEmail:data.adminEmail}},{status:201});
