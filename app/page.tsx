@@ -464,9 +464,9 @@ export default function Home() {
           <small>{healthAvailable} عنصرًا متاحًا من {healthTotal}</small>
         </div>
         <div className="userMini">
-          <div className="avatar">{role === "admin" ? "ح" : "ع"}</div>
+          <div className="avatar">{currentUser?.name?.trim()?.[0] ?? (role === "admin" ? "أ" : "ع")}</div>
           <div>
-            <b>{currentUser?.name ?? (role === "admin" ? "حسام محمد" : "موظف")}</b>
+            <b>{currentUser?.name ?? (role === "admin" ? "المدير" : "موظف")}</b>
             <span>
               {role === "admin" ? (currentUser?.isSuperAdmin ? "Platform Super Admin" : `Admin • ${currentUser?.organizationName ?? "الشركة"}`) : `موظف سحب${currentUser?.team ? ` • ${currentUser.team}` : ""}`}
             </span>
@@ -549,7 +549,7 @@ export default function Home() {
             }} />
           )}
           {view === "dashboard" && (
-            <Dashboard setView={setView} flash={flash} stats={dashboardStats} inventory={inventoryData} />
+            <Dashboard setView={setView} flash={flash} stats={dashboardStats} inventory={inventoryData} userName={currentUser?.name ?? "بك"} />
           )}
           {view === "withdraw" && (
             <Withdraw
@@ -762,11 +762,13 @@ function Dashboard({
   flash,
   stats,
   inventory,
+  userName,
 }: {
   setView: (v: View) => void;
   flash: (s: string) => void;
   stats: DashboardStats | null;
   inventory: InventoryRow[];
+  userName: string;
 }) {
   const trend = stats?.withdrawalTrend ?? [];
   const chartMax = Math.max(1, ...trend.map((entry) => Number(entry.count)));
@@ -784,7 +786,7 @@ function Dashboard({
   return (
     <>
       <PageHead
-        title="مساء الخير، حسام 👋"
+        title={`أهلًا، ${userName} 👋`}
         subtitle="إليك ملخص حركة المخزون والفريق اليوم."
       >
         <button
