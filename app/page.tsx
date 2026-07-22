@@ -797,6 +797,8 @@ function Dashboard({
   }).join(" ");
   const chartAreaPoints = chartPoints ? `0,220 ${chartPoints} 700,220` : "0,220 700,220";
   const yLabels = [chartMax,Math.round(chartMax*.75),Math.round(chartMax*.5),Math.round(chartMax*.25),0];
+  const totalWithdrawals = trend.reduce((total, entry) => total + Number(entry.count), 0);
+  const dailyAverage = trend.length ? Math.round(totalWithdrawals / trend.length) : 0;
   const availablePercent = stats?.inventory.total
     ? Math.round((stats.inventory.available/stats.inventory.total)*100)
     : 0;
@@ -877,10 +879,10 @@ function Dashboard({
               <h3>نشاط السحوبات</h3>
               <p>إجمالي السحوبات خلال آخر 7 أيام</p>
             </div>
-            <select>
-              <option>آخر 7 أيام</option>
-              <option>آخر 30 يومًا</option>
-            </select>
+            <div className="chartSummary" aria-label="ملخص نشاط السحوبات">
+              <span><b>{totalWithdrawals}</b> إجمالي</span>
+              <span><b>{dailyAverage}</b> متوسط يومي</span>
+            </div>
           </div>
           <div className="chart">
             <div className="yLabels">
@@ -894,13 +896,18 @@ function Dashboard({
                 aria-label="رسم نشاط السحوبات"
               >
                 <defs>
-                  <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stopColor="#2563eb" stopOpacity=".26" />
-                    <stop offset="1" stopColor="#2563eb" stopOpacity="0" />
+                  <linearGradient id="withdrawalFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stopColor="#5b5bd6" stopOpacity=".3" />
+                    <stop offset="1" stopColor="#5b5bd6" stopOpacity="0" />
                   </linearGradient>
                 </defs>
                 <polygon className="area" points={chartAreaPoints} />
                 <polyline className="line" points={chartPoints} />
+                {trend.map((entry,index) => {
+                  const x = trend.length > 1 ? (index/(trend.length-1))*700 : 350;
+                  const y = 205-(Number(entry.count)/chartMax)*175;
+                  return <circle key={entry.day} className="chartPoint" cx={x} cy={y} r="4.5"><title>{`${entry.count} سحب`}</title></circle>;
+                })}
               </svg>
               <div className="xLabels">
                 {trend.map((entry) => <span key={entry.day}>{new Date(`${entry.day}T12:00:00`).toLocaleDateString("ar-EG",{weekday:"short"})}</span>)}
@@ -1927,7 +1934,6 @@ function ImportModal({
 function ServiceCostEditor({ id, cost, onSave }: { id: string; cost: number; onSave: (id: string, value: number) => Promise<void> }) {
   const [value, setValue] = useState(cost);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setValue(cost); }, [cost]);
   if (!id) return null;
   return (
     <span className="costEditor">
@@ -2012,7 +2018,7 @@ function Services({
               <i style={{ width: `${(s.stock / s.total) * 100}%` }} />
             </div>
             <footer>
-              <ServiceCostEditor id={s.id} cost={s.defaultCost} onSave={saveCost} />
+              <ServiceCostEditor key={`${s.id}-${s.defaultCost}`} id={s.id} cost={s.defaultCost} onSave={saveCost} />
               <div>
                 <button
                   className="uploadService"

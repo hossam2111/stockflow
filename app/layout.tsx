@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import localFont from "next/font/local";
 import "./globals.css";
 
@@ -13,11 +14,22 @@ const thmanyah = localFont({
   ],
 });
 
-export const metadata: Metadata = {
-  title: "StockFlow — إدارة مخزون الاشتراكات",
-  description: "منصة آمنة لإدارة المخزون وتتبع سحوبات الموظفين.",
-  icons: { icon: "/favicon.svg" },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
+  const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  const origin = `${protocol}://${host}`;
+  const title = "StockFlow — إدارة مخزون الاشتراكات";
+  const description = "منصة آمنة لإدارة المخزون وتتبع سحوبات الموظفين.";
+  return {
+    metadataBase: new URL(origin),
+    title,
+    description,
+    icons: { icon: "/favicon.svg" },
+    openGraph: { title, description, type: "website", url: origin, images: [{ url: `${origin}/og.png`, width: 1734, height: 907, alt: "StockFlow dashboard" }] },
+    twitter: { card: "summary_large_image", title, description, images: [`${origin}/og.png`] },
+  };
+}
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

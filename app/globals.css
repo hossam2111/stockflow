@@ -589,7 +589,7 @@ button {
   overflow: visible;
 }
 .plot .area {
-  fill: url(#fill);
+  fill: url(#withdrawalFill);
 }
 .plot .line {
   fill: none;
@@ -3717,4 +3717,151 @@ html, body { max-width: 100%; overflow-x: hidden; }
   .rowActions { flex-wrap: wrap; }
   .search kbd { display: none; }
   .customerFields { grid-template-columns: 1fr; }
+}
+
+/* StockFlow 2026 visual system — calm indigo, warm neutrals, clearer analytics */
+:root {
+  --bg: #f5f5f8;
+  --card: #ffffff;
+  --text: #18181f;
+  --muted: #71717d;
+  --line: #e8e7ed;
+  --primary: #5555cf;
+  --primary2: #4444ba;
+  --sidebar: #17171f;
+  --shadow-sm: 0 1px 2px rgb(25 24 35 / 3%), 0 8px 24px rgb(25 24 35 / 4%);
+  --shadow-md: 0 18px 44px rgb(25 24 35 / 10%);
+}
+.app.dark {
+  --bg: #111117;
+  --card: #191920;
+  --text: #f4f3f8;
+  --muted: #9d9ba8;
+  --line: #2b2a34;
+  --sidebar: #0b0b10;
+}
+.sidebar {
+  background:
+    radial-gradient(circle at 75% 0%, rgb(96 91 211 / 20%), transparent 32%),
+    linear-gradient(180deg, #1b1b25 0%, #121218 100%);
+  box-shadow: -18px 0 50px rgb(20 19 30 / 9%);
+}
+.brandmark {
+  background: linear-gradient(145deg, #7774e8, #5250c8);
+  box-shadow: 0 12px 28px rgb(85 85 207 / 30%);
+}
+.sidebar nav button:hover,
+.sidebar nav button.active {
+  background: rgb(119 116 232 / 13%);
+}
+.sidebar nav button:hover .navIcon,
+.sidebar nav button.active .navIcon { color: #aaa8ff; }
+.sidebar nav button.active:before { background: #8b88f2; }
+.sidebarCard {
+  background: linear-gradient(145deg, rgb(57 55 83 / 94%), rgb(30 29 43 / 94%));
+  border-color: rgb(176 173 255 / 15%);
+}
+.workspace > header {
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+}
+.page { padding-top: 36px; }
+.pageHead { margin-bottom: 26px; }
+.pageHead h1 {
+  font-size: clamp(23px, 2vw, 29px);
+  font-weight: 900;
+  letter-spacing: -.7px;
+}
+.pageHead p { margin-top: 6px; font-size: 11px; }
+.search { background: #f1f1f5; border-color: transparent; }
+.search:focus-within {
+  border-color: rgb(85 85 207 / 36%);
+  box-shadow: 0 0 0 4px rgb(85 85 207 / 9%);
+}
+.primary {
+  box-shadow: 0 8px 20px rgb(85 85 207 / 20%);
+}
+.primary:hover { box-shadow: 0 12px 26px rgb(85 85 207 / 26%); }
+.metrics { gap: 14px; margin-bottom: 18px; }
+.metric,
+.panel,
+.serviceCard,
+.tablePanel {
+  border-color: color-mix(in srgb, var(--line) 88%, transparent);
+  box-shadow: var(--shadow-sm);
+}
+.metric {
+  min-height: 142px;
+  padding: 19px;
+  overflow: hidden;
+}
+.metric::after {
+  content: "";
+  position: absolute;
+  width: 90px;
+  height: 90px;
+  left: -38px;
+  bottom: -45px;
+  border-radius: 50%;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  pointer-events: none;
+}
+.metric > b { font-size: 29px; margin-top: 12px; letter-spacing: -1.2px; }
+.metricIcon { border-radius: 12px; }
+.metricIcon.blue { background: #efefff; color: #5555cf; }
+.metricIcon.green { background: #eaf8f0; color: #15845c; }
+.metricIcon.purple { background: #f3edff; color: #8057c9; }
+.metricIcon.orange { background: #fff2df; color: #c67016; }
+.metricAccent { display: none; }
+.panel { border-radius: 18px; }
+.panelHead { padding: 20px 22px 14px; }
+.panelHead h3 { font-size: 15px; font-weight: 800; }
+.panelHead p { font-size: 10px; margin-top: 3px; }
+.chartPanel { overflow: hidden; }
+.chartSummary {
+  display: flex;
+  gap: 7px;
+  direction: rtl;
+}
+.chartSummary span {
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: #f3f2f8;
+  color: var(--muted);
+  font-size: 9px;
+  white-space: nowrap;
+}
+.chartSummary b { color: var(--text); font-size: 11px; margin-left: 2px; }
+.chart { height: 284px; padding: 13px 22px 22px; }
+.gridlines {
+  background: repeating-linear-gradient(to bottom, var(--line) 0, var(--line) 1px, transparent 1px, transparent 25%);
+  opacity: .72;
+}
+.plot .line {
+  stroke: #5b5bd6;
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 5px 6px rgb(85 85 207 / 18%));
+}
+.chartPoint {
+  fill: #fff;
+  stroke: #5b5bd6;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+.xLabels, .yLabels { font-size: 9px; }
+.dark .chartSummary span,
+.dark .search { background: #22222b; }
+.dark .metricIcon.blue { background: #29294d; color: #aaa8ff; }
+.dark .metricIcon.green { background: #153a2d; color: #63d3a5; }
+.dark .metricIcon.purple { background: #35264d; color: #c2a1ff; }
+.dark .metricIcon.orange { background: #432f18; color: #f0b66d; }
+.dark .chartPoint { fill: #191920; stroke: #8d89f0; }
+.dark .plot .line { stroke: #8d89f0; }
+
+@media (max-width: 760px) {
+  .page { padding-top: 22px; }
+  .chartSummary { flex-direction: column; gap: 4px; }
+  .chartSummary span { padding: 5px 7px; }
+  .chart { height: 245px; padding-inline: 14px; }
 }
