@@ -16,6 +16,7 @@ const schema = z.object({
   subscriptionMonths:z.number().int().min(1).max(24),
   warrantyDays:z.number().int().min(0).max(730),
   quantity:z.number().int().min(1).max(20).default(1),
+  accountType:z.enum(["INDIVIDUAL","SHARED"]),
   sellingPrice:z.number().min(0).optional().default(0),
   paidAmount:z.number().min(0).optional(),
 });
@@ -94,11 +95,12 @@ export async function POST(request: Request) {
         sellingPrice?:number;
       }>();
       for(let index=0;index<parsed.data.quantity;index++){
+        if(parsed.data.accountType==="SHARED"&&!allowShared)throw new Error("SHARED_ACCOUNTS_DISABLED");
         const inventoryResult=await client.query(`SELECT * FROM inventory_items WHERE organization_id=$1 AND service_id=$2
           AND status='AVAILABLE' AND current_usage<max_usage
-          AND ($3::boolean=TRUE OR account_type<>'SHARED')
-          ORDER BY CASE WHEN account_type='SHARED' THEN 0 ELSE 1 END, created_at ${allocationOrder} LIMIT 1 ${lock}`,
-          [context.organizationId,parsed.data.serviceId,allowShared]);
+          AND account_type=$3
+          ORDER BY created_at ${allocationOrder} LIMIT 1 ${lock}`,
+          [context.organizationId,parsed.data.serviceId,parsed.data.accountType]);
         const item=inventoryResult.rows[0];if(!item)throw new Error("OUT_OF_STOCK");allocatedIds.push(item.id);
         const updated=await client.query(`UPDATE inventory_items SET current_usage=current_usage+1,status=CASE WHEN current_usage+1>=max_usage THEN 'FULL' ELSE 'AVAILABLE' END WHERE id=$1 AND current_usage<max_usage RETURNING *`,[item.id]);
         const updatedItem=updated.rows[0];if(!updatedItem)throw new Error("INVENTORY_CONFLICT");
@@ -150,9 +152,9 @@ export async function POST(request: Request) {
     return NextResponse.json(result,{status:result.duplicate?200:201});
   } catch(error) {
     const code=error instanceof Error?error.message:"WITHDRAWAL_FAILED";
-    const known=["EMPLOYEE_DISABLED","EMPLOYEE_NOT_FOUND","SERVICE_NOT_ALLOWED","DAILY_LIMIT_REACHED","SERVICE_LIMIT_REACHED","OUT_OF_STOCK","INVENTORY_CONFLICT","INVALID_DATE"];
+    const known=["EMPLOYEE_DISABLED","EMPLOYEE_NOT_FOUND","SERVICE_NOT_ALLOWED","DAILY_LIMIT_REACHED","SERVICE_LIMIT_REACHED","OUT_OF_STOCK","SHARED_ACCOUNTS_DISABLED","INVENTORY_CONFLICT","INVALID_DATE"];
     if(!known.includes(code))console.error("[withdrawals] unexpected failure:",error);
-    const status=["EMPLOYEE_DISABLED","SERVICE_NOT_ALLOWED","DAILY_LIMIT_REACHED","SERVICE_LIMIT_REACHED"].includes(code)?403:code==="OUT_OF_STOCK"?409:400;
+    const status=["EMPLOYEE_DISABLED","SERVICE_NOT_ALLOWED","DAILY_LIMIT_REACHED","SERVICE_LIMIT_REACHED","SHARED_ACCOUNTS_DISABLED"].includes(code)?403:code==="OUT_OF_STOCK"?409:400;
     return NextResponse.json({error:code},{status});
   }
 }

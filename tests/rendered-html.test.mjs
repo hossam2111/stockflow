@@ -159,3 +159,13 @@ test("makes OTP a per-service choice and enforces it only when enabled",async()=
   assert.match(inventory,/OTP_REQUIRED/);
   assert.match(database,/requires_otp BOOLEAN NOT NULL DEFAULT FALSE/);
 });
+
+test("lets the employee choose account type and separates customer and internal messages",async()=>{
+  const [page,withdrawals]=await Promise.all([read("app/page.tsx"),read("app/api/withdrawals/route.ts")]);
+  assert.match(page,/نوع الحساب المطلوب/);
+  assert.match(page,/رسالة داخلية للإدارة/);
+  assert.match(page,/رجوع للسحب/);
+  assert.doesNotMatch(page,/customerAccountLines\s*=.*allocatedUses/);
+  assert.match(withdrawals,/accountType:z\.enum/);
+  assert.match(withdrawals,/AND account_type=\$3/);
+});

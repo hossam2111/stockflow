@@ -79,7 +79,7 @@ const viewPermissions:Partial<Record<View,string>>={dashboard:"dashboard.view",i
 // Canonical service catalogue. The array order is also the display order across the app
 // (Google, ChatGPT, CapCut, Grok, then the rest). stock/used/total are cosmetic fallbacks
 // used only before live inventory data loads; real numbers come from /api/services.
-const services = [
+const services: Array<{ name:string; code:string; color:string; stock:number; used:number; total:number; type:string; price:number; individualStock?:number; sharedStock?:number }> = [
   { name: "Google Gemini", code: "Gm", color: "#4285F4", stock: 0, used: 0, total: 0, type: "فردي", price: 300 },
   { name: "ChatGPT Plus", code: "GPT", color: "#111827", stock: 0, used: 0, total: 0, type: "مشترك", price: 450 },
   { name: "CapCut Pro", code: "Cp", color: "#0EA5E9", stock: 0, used: 0, total: 0, type: "مشترك", price: 200 },
@@ -176,6 +176,7 @@ type WithdrawalCustomerDetails = {
   sellingPrice: number;
   paidInFull: boolean;
   paidAmount: number;
+  accountType: "INDIVIDUAL" | "SHARED";
 };
 
 type DashboardStats = {
@@ -445,6 +446,8 @@ export default function Home() {
         total: record.total_capacity ?? record.total,
         type: record.available_shared_slots > 0 ? "مشترك" : "فردي",
         price: visual?.price ?? 0,
+        individualStock: record.available_individual_accounts ?? 0,
+        sharedStock: record.available_shared_slots ?? 0,
       };
     });
     const source = (live.length ? live : services).slice().sort((a, b) => serviceRank(a.name) - serviceRank(b.name) || a.name.localeCompare(b.name, "ar"));
@@ -496,7 +499,7 @@ export default function Home() {
     const result = await response.json();
     if (!response.ok) {
       if(result.error==="EMPLOYEE_DISABLED") setEmployeeBlocked(true);
-      const messages:Record<string,string>={EMPLOYEE_DISABLED:"تم إيقاف صلاحية السحب لحسابك بواسطة الأدمن",EMPLOYEE_NOT_FOUND:"حساب السحب غير موجود ضمن هذه المؤسسة — السحب متاح لحسابات الموظفين فقط",SERVICE_NOT_ALLOWED:"هذه الخدمة غير مسموحة لك",DAILY_LIMIT_REACHED:"وصلت إلى الحد اليومي العام",SERVICE_LIMIT_REACHED:"وصلت إلى حد هذه الخدمة",OUT_OF_STOCK:"لا يوجد مخزون متاح لهذه الخدمة — أضف حسابات لهذه الخدمة أولًا",INVENTORY_CONFLICT:"تعارض في المخزون، برجاء المحاولة مرة أخرى",INVALID_INPUT:"بيانات الطلب غير مكتملة أو غير صحيحة",INVALID_DATE:"تاريخ بداية الاشتراك غير صحيح"};
+      const messages:Record<string,string>={EMPLOYEE_DISABLED:"تم إيقاف صلاحية السحب لحسابك بواسطة الأدمن",EMPLOYEE_NOT_FOUND:"حساب السحب غير موجود ضمن هذه المؤسسة — السحب متاح لحسابات الموظفين فقط",SERVICE_NOT_ALLOWED:"هذه الخدمة غير مسموحة لك",DAILY_LIMIT_REACHED:"وصلت إلى الحد اليومي العام",SERVICE_LIMIT_REACHED:"وصلت إلى حد هذه الخدمة",OUT_OF_STOCK:`لا يوجد مخزون ${details.accountType === "SHARED" ? "مشترك" : "فردي"} متاح لهذه الخدمة`,SHARED_ACCOUNTS_DISABLED:"السحب من الحسابات المشتركة متوقف من إعدادات الشركة",INVENTORY_CONFLICT:"تعارض في المخزون، برجاء المحاولة مرة أخرى",INVALID_INPUT:"بيانات الطلب غير مكتملة أو غير صحيحة",INVALID_DATE:"تاريخ بداية الاشتراك غير صحيح"};
       flash(messages[result.error]||`تعذر تنفيذ السحب (${result.error||response.status})`);
       return;
     }
@@ -1200,7 +1203,7 @@ function Withdraw({
 }) {
   const [details, setDetails] = useState<WithdrawalCustomerDetails>({
     customerName: "", customerPhone: "", customerContact: "واتساب", customerReference: "", customerNotes: "",
-    subscriptionStartDate: todayInCairo(), subscriptionMonths: 1, warrantyDays: 30, quantity: 1, sellingPrice: 0, paidInFull: true, paidAmount: 0,
+    subscriptionStartDate: todayInCairo(), subscriptionMonths: 1, warrantyDays: 30, quantity: 1, sellingPrice: 0, paidInFull: true, paidAmount: 0, accountType: selected.type === "مشترك" ? "SHARED" : "INDIVIDUAL",
   });
   const [submitting, setSubmitting] = useState(false);
   const [messageCopied, setMessageCopied] = useState(false);
@@ -1225,11 +1228,13 @@ function Withdraw({
   const previewEndDate = addMonthsToDate(details.subscriptionStartDate, details.subscriptionMonths);
   const previewWarrantyEnd = details.warrantyDays ? addDaysToDate(details.subscriptionStartDate, details.warrantyDays) : null;
   const totalAllocatedUses = accounts.reduce((total, item) => total + item.allocatedUses, 0);
-  const accountLines = accounts.map((item, index) => `${item.accountType === "SHARED" ? "الحساب المشترك" : "الحساب"} ${index + 1}\n📧 الإيميل: ${item.email}\n🔑 كلمة المرور: ${item.password}\n🔐 مفتاح OTP: ${item.otpSecret || "غير متوفر"}\n🌐 رابط استخراج OTP: ${item.otpUrl || "غير متوفر"}${item.accountType === "SHARED" ? `\n👥 عدد مرات السحب: ${item.allocatedUses}\n📊 الاستخدام بعد السحب: ${item.newUsage} من ${item.maxUsage}\n📦 المتبقي: ${item.remainingUsage}` : ""}`).join("\n\n");
+  const customerAccountLines = accounts.map((item, index) => `${accounts.length > 1 ? `الحساب ${index + 1}\n` : ""}📧 الإيميل: ${item.email}\n🔑 كلمة المرور: ${item.password}${item.otpSecret ? `\n🔐 مفتاح OTP: ${item.otpSecret}` : ""}${item.otpUrl ? `\n🌐 رابط استخراج OTP: ${item.otpUrl}` : ""}`).join("\n\n");
+  const internalAccountLines = accounts.map((item, index) => `${item.accountType === "SHARED" ? "حساب مشترك" : "حساب فردي"} ${index + 1} — ${item.inventoryId}\n${item.email}\nالاستخدام: ${item.newUsage} من ${item.maxUsage} — المتبقي: ${item.remainingUsage}`).join("\n\n");
   const priceLine = account.sellingPrice ? `\n💵 سعر البيع: ${account.sellingPrice} ج.م` : "";
-  const deliveryMessage = `أهلًا ${account.customerName || "بك"} 👋\nتم تسجيل ${totalAllocatedUses} ${totalAllocatedUses === 1 ? "عملية سحب" : "عمليات سحب"} في خدمة ${selected.name} بنجاح.\n\n${accountLines}\n\n📅 بداية الاشتراك: ${formatArabicDate(account.subscriptionStartDate)}\n⏳ مدة الاشتراك: ${account.subscriptionMonths} ${account.subscriptionMonths === 1 ? "شهر" : "شهور"}\n🏁 تاريخ الانتهاء: ${formatArabicDate(account.subscriptionEndDate)}\n🛡️ الضمان: ${account.warrantyDays ? `${account.warrantyDays} يوم — حتى ${formatArabicDate(account.warrantyEndDate)}` : "بدون ضمان"}${priceLine}\n\n⚠️ برجاء عدم تغيير بيانات الحسابات.\nشكرًا لاختيارك لنا 💙`;
+  const deliveryMessage = `أهلًا ${account.customerName || "بك"} 👋\nبيانات اشتراك ${selected.name}:\n\n${customerAccountLines}\n\n📅 بداية الاشتراك: ${formatArabicDate(account.subscriptionStartDate)}\n⏳ مدة الاشتراك: ${account.subscriptionMonths} ${account.subscriptionMonths === 1 ? "شهر" : "شهور"}\n🏁 تاريخ الانتهاء: ${formatArabicDate(account.subscriptionEndDate)}\n🛡️ الضمان: ${account.warrantyDays ? `${account.warrantyDays} يوم — حتى ${formatArabicDate(account.warrantyEndDate)}` : "بدون ضمان"}${priceLine}\n\n⚠️ برجاء عدم تغيير بيانات الحساب.\nشكرًا لاختيارك لنا 💙`;
+  const internalMessage = `ملخص عملية السحب — ${selected.name}\nالعميل: ${account.customerName}\nالنوع: ${account.accountType === "SHARED" ? "مشترك" : "فردي"}\nعدد العمليات: ${totalAllocatedUses}\n\n${internalAccountLines}\n\nنهاية الاشتراك: ${formatArabicDate(account.subscriptionEndDate)}\nالضمان: ${account.warrantyEndDate ? formatArabicDate(account.warrantyEndDate) : "بدون ضمان"}`;
   function resetForNext() {
-    setDetails({ customerName: "", customerPhone: "", customerContact: "واتساب", customerReference: "", customerNotes: "", subscriptionStartDate: todayInCairo(), subscriptionMonths: 1, warrantyDays: 30, quantity: 1, sellingPrice: 0, paidInFull: true, paidAmount: 0 });
+    setDetails({ customerName: "", customerPhone: "", customerContact: "واتساب", customerReference: "", customerNotes: "", subscriptionStartDate: todayInCairo(), subscriptionMonths: 1, warrantyDays: 30, quantity: 1, sellingPrice: 0, paidInFull: true, paidAmount: 0, accountType: "INDIVIDUAL" });
     onReset();
   }
   async function submitWithdrawal() {
@@ -1247,6 +1252,8 @@ function Withdraw({
     setMessageCopied(true);
     window.setTimeout(() => setMessageCopied(false), 1800);
   }
+  async function copyInternalMessage() { if (navigator.clipboard) await navigator.clipboard.writeText(internalMessage); }
+  const selectedTypeStock = details.accountType === "SHARED" ? (selected.sharedStock ?? 0) : (selected.individualStock ?? selected.stock);
   return (
     <>
       <PageHead
@@ -1289,7 +1296,7 @@ function Withdraw({
             {availableServices.map((s) => (
               <button
                 key={s.name}
-                onClick={() => { setSelected(s); if (withdrawn) resetForNext(); }}
+                onClick={() => { setSelected(s); setDetails((current) => ({ ...current, accountType: (s.individualStock ?? s.stock) > 0 ? "INDIVIDUAL" : "SHARED", quantity: 1 })); if (withdrawn) resetForNext(); }}
                 className={selected.name === s.name ? "selected" : ""}
               >
                 <span className="serviceIcon" style={{ background: s.color }}>
@@ -1354,9 +1361,15 @@ function Withdraw({
                   <span>مطلوب قبل السحب</span>
                 </div>
                 <div className="customerFields">
-                  <label>{selected.type === "مشترك" ? "عدد مرات سحب الإيميل المشترك" : "عدد الحسابات المطلوبة"} *
+                  <label>نوع الحساب المطلوب *
+                    <select value={details.accountType} onChange={(event) => setDetails({ ...details, accountType: event.target.value as "INDIVIDUAL" | "SHARED", quantity: 1 })}>
+                      <option value="INDIVIDUAL" disabled={(selected.individualStock ?? selected.stock) < 1}>فردي — {selected.individualStock ?? selected.stock} متاح</option>
+                      <option value="SHARED" disabled={(selected.sharedStock ?? 0) < 1}>مشترك — {selected.sharedStock ?? 0} سحبة متاحة</option>
+                    </select>
+                  </label>
+                  <label>{details.accountType === "SHARED" ? "عدد مرات سحب الإيميل المشترك" : "عدد الحسابات المطلوبة"} *
                     <input type="number" min={1} max={Math.min(20, Math.max(1, selected.stock))} value={details.quantity} onChange={(event) => setDetails({ ...details, quantity: Math.max(1, Math.min(20, Number(event.target.value) || 1)) })} />
-                    <small>{selected.type === "مشترك" ? "يمكن سحب نفس الإيميل أكثر من مرة حتى يصل إلى الحد الأقصى." : "سيتم تخصيص العدد بالكامل في عملية واحدة آمنة."}</small>
+                    <small>{details.accountType === "SHARED" ? "يمكن سحب نفس الإيميل أكثر من مرة حتى يصل إلى الحد الأقصى." : "سيتم تخصيص العدد بالكامل في عملية واحدة آمنة."}</small>
                   </label>
                   <label>اسم العميل *
                     <input value={details.customerName} onChange={(event) => setDetails({ ...details, customerName: event.target.value })} placeholder="مثال: أحمد محمد" required />
@@ -1405,7 +1418,7 @@ function Withdraw({
                   </label>
                 </div>
                 <div className="datePreview">
-                  <div><span>{selected.type === "مشترك" ? "مرات السحب" : "عدد الحسابات"}</span><b>{details.quantity} {selected.type === "مشترك" ? "مرة" : details.quantity === 1 ? "حساب" : "حسابات"}</b></div><div><span>بداية الاشتراك</span><b>{formatArabicDate(details.subscriptionStartDate)}</b></div>
+                  <div><span>{details.accountType === "SHARED" ? "مرات السحب" : "عدد الحسابات"}</span><b>{details.quantity} {details.accountType === "SHARED" ? "مرة" : details.quantity === 1 ? "حساب" : "حسابات"}</b></div><div><span>بداية الاشتراك</span><b>{formatArabicDate(details.subscriptionStartDate)}</b></div>
                   <i>←</i>
                   <div><span>نهاية الاشتراك</span><b>{formatArabicDate(previewEndDate)}</b></div>
                   <div><span>الضمان</span><b>{previewWarrantyEnd ? `حتى ${formatArabicDate(previewWarrantyEnd)}` : "بدون ضمان"}</b></div>
@@ -1418,8 +1431,8 @@ function Withdraw({
                   <span>يتم حجز كل الحسابات وتخصيصها لك داخل عملية قاعدة بيانات واحدة.</span>
                 </div>
               </div>
-              <button className="withdrawButton" disabled={submitting || blocked || details.customerName.trim().length < 2 || !details.subscriptionStartDate || details.quantity < 1 || details.quantity > selected.stock} onClick={submitWithdrawal}>
-                {submitting ? "جاري تنفيذ السحب..." : <>تأكيد سحب {details.quantity} {selected.type === "مشترك" ? "مرة" : details.quantity === 1 ? "حساب" : "حسابات"} <ArrowLeft size={17} /></>}
+              <button className="withdrawButton" disabled={submitting || blocked || details.customerName.trim().length < 2 || !details.subscriptionStartDate || details.quantity < 1 || details.quantity > selectedTypeStock} onClick={submitWithdrawal}>
+                {submitting ? "جاري تنفيذ السحب..." : <>تأكيد سحب {details.quantity} {details.accountType === "SHARED" ? "مرة" : details.quantity === 1 ? "حساب" : "حسابات"} <ArrowLeft size={17} /></>}
               </button>
             </>
           )}
@@ -1476,7 +1489,8 @@ function Withdraw({
               >
                 {messageCopied ? <><Check size={16} strokeWidth={2.3} /> تم نسخ الرسالة ✓</> : <><ClipboardCopy size={16} strokeWidth={1.9} /> نسخ الرسالة كاملة</>}
               </button>
-              <button className="secondary newWithdrawal" onClick={resetForNext}>تنفيذ عملية سحب جديدة</button>
+              <div className="internalMessageBox"><div><b>رسالة داخلية للإدارة</b><span>تحتوي رقم المخزون والاستخدام ولا تُرسل للعميل.</span></div><pre>{internalMessage}</pre><button className="secondary" onClick={copyInternalMessage}><ClipboardCopy size={15}/> نسخ الرسالة الداخلية</button></div>
+              <button className="secondary newWithdrawal" onClick={resetForNext}><ArrowLeft size={16}/> رجوع للسحب</button>
             </div>
           )}
           <p className="secureNote">
