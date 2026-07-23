@@ -4466,4 +4466,11 @@ tbody tr:hover{background:#fafbfe}.dark thead th{background:#111827}.dark tbody 
 .requiredCheck{display:flex!important;align-items:center;gap:6px;white-space:nowrap}.requiredCheck input{width:auto}
 .fieldBuilderRow>button{border:0;background:transparent;display:grid;place-items:center}
 .serviceCard footer>div{flex-wrap:wrap}.serviceManage{font-size:12px}
+.uploadColumnsHead{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:18px 0 10px}
+.uploadColumnsHead>div{display:grid;gap:3px}.uploadColumnsHead span{font-size:12px;color:var(--muted)}
+.uploadColumnsHead button{display:inline-flex;align-items:center;gap:6px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--primary);font-weight:700}
+.uploadFieldBuilder{margin-bottom:12px}.uploadFieldActions{display:flex;justify-content:flex-end;gap:8px;padding-top:4px}
+.fieldBuilderRow.uploadFieldRow{grid-template-columns:30px minmax(130px,1fr) 120px 85px 108px}
+.fieldOrderActions{display:flex;align-items:center;justify-content:flex-end;gap:3px}.fieldOrderActions button{display:grid;place-items:center;width:31px;height:31px;border:1px solid var(--line);border-radius:8px;background:var(--card)}.fieldOrderActions button:disabled{opacity:.35}
 @media(max-width:650px){.fieldBuilderRow{grid-template-columns:28px 1fr 36px}.fieldBuilderRow select,.fieldBuilderRow .requiredCheck{grid-column:2}.fieldBuilderHead{align-items:flex-start;flex-direction:column}}
+@media(max-width:650px){.fieldBuilderRow.uploadFieldRow{grid-template-columns:28px 1fr 108px}.fieldBuilderRow.uploadFieldRow select,.fieldBuilderRow.uploadFieldRow .requiredCheck{grid-column:2}.fieldOrderActions{grid-column:3;grid-row:1/4;flex-direction:column}}

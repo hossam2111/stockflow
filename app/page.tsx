@@ -1490,10 +1490,9 @@ function Withdraw({
                       <span>{item.accountType === "SHARED" ? `${item.allocatedUses} مرة • ${item.newUsage}/${item.maxUsage} • متبقي ${item.remainingUsage}` : item.inventoryId}</span>
                     </div>
                     <div className="credentials">
-                      <Credential label="الإيميل" value={item.email} />
-                      <Credential label="كلمة المرور" value={item.password} />
-                      <Credential label="مفتاح OTP" value={item.otpSecret || "غير متوفر"} />
-                      <Credential label="موقع استخراج OTP" value={item.otpUrl || "غير متوفر"} link={Boolean(item.otpUrl)} />
+                      {item.fieldSchema?.length&&item.fields
+                        ? item.fieldSchema.filter(field=>String(item.fields?.[field.key]??"").trim()).map(field=><Credential key={field.key} label={field.label} value={String(item.fields?.[field.key]??"")} link={field.type==="url"}/>)
+                        : <><Credential label="الإيميل" value={item.email} /><Credential label="كلمة المرور" value={item.password} /><Credential label="مفتاح OTP" value={item.otpSecret || "غير متوفر"} /><Credential label="موقع استخراج OTP" value={item.otpUrl || "غير متوفر"} link={Boolean(item.otpUrl)} /></>}
                     </div>
                     {item.otpSecret && <div className="otpLiveRow"><LiveOtp secret={item.otpSecret} /></div>}
                     {item.accountType === "SHARED" && (
@@ -1937,8 +1936,12 @@ function ImportModal({
   const [fileName, setFileName] = useState("");
   const [fileError, setFileError] = useState("");
   const [single, setSingle] = useState<Record<string,string>>({});
+  const [editingFields,setEditingFields]=useState(false);
+  const [fieldOverrides,setFieldOverrides]=useState<Record<string,ServiceField[]>>({});
+  const [savingFields,setSavingFields]=useState(false);
   const selectedService = serviceRecords.find((service) => service.name === serviceName);
-  const serviceFields:ServiceField[]=selectedService?.field_schema?.length?selectedService.field_schema:[{key:"email",label:"الإيميل",type:"email",required:true},{key:"password",label:"كلمة المرور",type:"password",required:true}];
+  const defaultUploadFields:ServiceField[]=[{key:"email",label:"الإيميل",type:"email",required:true},{key:"password",label:"كلمة المرور",type:"password",required:true}];
+  const serviceFields:ServiceField[]=fieldOverrides[selectedService?.id??""]??(selectedService?.field_schema?.length?selectedService.field_schema:defaultUploadFields);
   const fileRef = useRef<HTMLInputElement>(null);
   const sourceRows = tab === "single" ? (Object.values(single).some(Boolean) ? [serviceFields.map(field=>single[field.key]??"").join(" | ")] : []) : rows.trim().split(/\r?\n/).filter(Boolean);
   const parsedRows = sourceRows.map((line) => line.split("|").map((value) => value.trim()));
@@ -1951,6 +1954,42 @@ function ImportModal({
   }));
   const count = validRows.length;
   const invalidCount = parsedRows.length - validRows.length;
+
+  function updateUploadField(index:number,patch:Partial<ServiceField>){
+    if(!selectedService)return;
+    setFieldOverrides(current=>({...current,[selectedService.id]:serviceFields.map((field,i)=>i===index?{...field,...patch}:field)}));
+  }
+  function addUploadField(){
+    if(!selectedService||serviceFields.length>=20)return;
+    setFieldOverrides(current=>({...current,[selectedService.id]:[...serviceFields,{key:`custom_${Date.now()}`,label:"",type:"text",required:false}]}));
+  }
+  function removeUploadField(index:number){
+    if(!selectedService||serviceFields.length===1)return;
+    setFieldOverrides(current=>({...current,[selectedService.id]:serviceFields.filter((_,i)=>i!==index)}));
+  }
+  function setUploadPreset(fields:ServiceField[]){
+    if(!selectedService)return;
+    setFieldOverrides(current=>({...current,[selectedService.id]:fields}));
+    setRows("");setSingle({});
+  }
+  function moveUploadField(index:number,direction:-1|1){
+    if(!selectedService)return;
+    const target=index+direction;if(target<0||target>=serviceFields.length)return;
+    const next=[...serviceFields];[next[index],next[target]]=[next[target],next[index]];
+    setFieldOverrides(current=>({...current,[selectedService.id]:next}));
+    setRows("");setSingle({});
+  }
+  async function saveUploadFields(){
+    if(!selectedService||serviceFields.some(field=>!field.label.trim())){flash("اكتب اسم كل عمود قبل الحفظ");return;}
+    setSavingFields(true);
+    try{
+      const response=await fetch(`/api/services?id=${encodeURIComponent(selectedService.id)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({fieldSchema:serviceFields,requiresOtp:serviceFields.some(field=>field.key==="otpSecret"&&field.required)})});
+      if(!response.ok){flash("تعذر حفظ أعمدة الخدمة");return;}
+      selectedService.field_schema=serviceFields;
+      setEditingFields(false);setRows("");setSingle({});
+      flash("تم حفظ الأعمدة. أدخل البيانات بنفس الترتيب الظاهر.");
+    }finally{setSavingFields(false);}
+  }
 
   async function loadFile(file: File) {
     setFileName(file.name); setFileError("");
@@ -1979,18 +2018,18 @@ function ImportModal({
       setRows(normalized);
       if (!normalized) setFileError("الملف لا يحتوي على صفوف قابلة للاستيراد");
     } catch {
-      setRows(""); setFileError("تعذر قراءة الملف. تأكد أن ترتيب الأعمدة: Email, Password, OTP Key, OTP Website");
+      setRows(""); setFileError(`تعذر قراءة الملف. تأكد أن ترتيب الأعمدة: ${serviceFields.map(field=>field.label).join("، ")}`);
     }
   }
   async function importAccounts(){
-    if (!count || invalidCount) { flash("راجع الإيميل والباسورد ورابط OTP في الصفوف غير الصحيحة"); return; }
+    if (!count || invalidCount) { flash(`راجع الحقول المطلوبة وأنواع البيانات حسب الترتيب: ${serviceFields.map(field=>field.label).join("، ")}`); return; }
     const selectedId = serviceRecords.find((service) => service.name === serviceName)?.id ?? serviceIds[serviceName];
     const items=validRows.map(values=>({serviceId:selectedId,fields:Object.fromEntries(serviceFields.map((field,index)=>[field.key,values[index]??""])),accountType,maxUsage:accountType==="SHARED"?Math.max(1,Math.min(100,sharedMaxUsage)):1}));
     setSaving(true);
     try {
       const response=await fetch("/api/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items})});
       const result=await response.json();
-      if(!response.ok){flash(result.error === "OTP_REQUIRED" ? "هذه الخدمة تتطلب مفتاح OTP لكل حساب" : result.error === "INVALID_ITEMS" ? "بيانات بعض الحسابات غير صحيحة" : "تعذر حفظ الحسابات");return;}
+      if(!response.ok){flash(result.error === "OTP_REQUIRED" ? "هذه الخدمة تتطلب مفتاح OTP لكل حساب" : ["INVALID_ITEMS","REQUIRED_FIELD_MISSING","INVALID_FIELD"].includes(result.error) ? "بيانات بعض الحسابات لا تطابق الأعمدة المحددة" : "تعذر حفظ الحسابات");return;}
       flash(`تمت إضافة ${result.inserted} حساب وتخطي ${result.duplicates} مكرر`);
       onImported();
     } finally { setSaving(false); }
@@ -2016,7 +2055,7 @@ function ImportModal({
         <div className="importService">
           <label>
             الخدمة
-            <select value={serviceName} onChange={e=>setServiceName(e.target.value)}>
+            <select value={serviceName} onChange={e=>{setServiceName(e.target.value);setRows("");setSingle({});setEditingFields(false);}}>
               {(serviceRecords.length ? serviceRecords : services.map((service) => ({ id: serviceIds[service.name], name: service.name }))).map(s=><option key={s.id}>{s.name}</option>)}
             </select>
           </label>
@@ -2035,8 +2074,15 @@ function ImportModal({
             </label>
           )}
         </div>
+        <div className="uploadColumnsHead"><div><b>الأعمدة التي سترفعها</b><span>رتّب بيانات كل صف بنفس ترتيب الأعمدة التالي.</span></div><button type="button" onClick={()=>setEditingFields(value=>!value)}><Pencil size={14}/>{editingFields?"إغلاق التعديل":"تحديد الأعمدة"}</button></div>
+        {editingFields&&<div className="fieldBuilder uploadFieldBuilder">
+          <div className="fieldBuilderHead"><div><b>تخصيص أعمدة {serviceName}</b><span>اختر الاسم والنوع وهل العمود إلزامي. الرابط سيظهر كرابط قابل للفتح بعد السحب.</span></div><button type="button" onClick={addUploadField} disabled={serviceFields.length>=20}><Plus size={14}/> إضافة عمود</button></div>
+          <div className="fieldPresets"><button type="button" onClick={()=>setUploadPreset(defaultUploadFields)}>إيميل + باسورد</button><button type="button" onClick={()=>setUploadPreset([{key:"code",label:"الكود",type:"text",required:true}])}>كود فقط</button><button type="button" onClick={()=>setUploadPreset([...defaultUploadFields,{key:"otpSecret",label:"مفتاح OTP",type:"text",required:true},{key:"otpUrl",label:"رابط استخراج OTP",type:"url",required:false}])}>إيميل + باسورد + OTP</button><button type="button" onClick={()=>setUploadPreset([{key:"accessUrl",label:"رابط الدخول",type:"url",required:true}])}>رابط فقط</button></div>
+          {serviceFields.map((field,index)=><div className="fieldBuilderRow uploadFieldRow" key={field.key}><span>{index+1}</span><input value={field.label} placeholder="اسم العمود" onChange={event=>updateUploadField(index,{label:event.target.value})}/><select value={field.type} onChange={event=>updateUploadField(index,{type:event.target.value as ServiceField["type"]})}><option value="text">نص</option><option value="email">إيميل</option><option value="password">كلمة مرور</option><option value="url">رابط</option><option value="number">رقم</option></select><label className="requiredCheck"><input type="checkbox" checked={field.required} onChange={event=>updateUploadField(index,{required:event.target.checked})}/> مطلوب</label><div className="fieldOrderActions"><button type="button" disabled={index===0} onClick={()=>moveUploadField(index,-1)} aria-label="تحريك العمود للأعلى">↑</button><button type="button" disabled={index===serviceFields.length-1} onClick={()=>moveUploadField(index,1)} aria-label="تحريك العمود للأسفل">↓</button><button type="button" className="dangerText" disabled={serviceFields.length===1} onClick={()=>removeUploadField(index)} aria-label={`حذف عمود ${field.label||index+1}`}><Trash2 size={15}/></button></div></div>)}
+          <div className="uploadFieldActions"><button type="button" className="secondary" onClick={()=>{if(selectedService)setFieldOverrides(current=>({...current,[selectedService.id]:selectedService.field_schema?.length?selectedService.field_schema:defaultUploadFields}));}}>استعادة المحفوظ</button><button type="button" className="primary" disabled={savingFields} onClick={saveUploadFields}>{savingFields?"جاري الحفظ...":"حفظ واستخدام الأعمدة"}</button></div>
+        </div>}
         <div className="fieldMap">
-          {serviceFields.map((field,index)=><div key={field.key}><span>{index+1}</span><b>{field.label}</b><em>{field.required?"مطلوب":"اختياري"}</em></div>)}
+          {serviceFields.map((field,index)=><div key={field.key}><span>{index+1}</span><b>{field.label||"عمود بدون اسم"}</b><em>{field.required?"مطلوب":"اختياري"}</em></div>)}
         </div>
         <div className="importTabs">
           <button className={tab === "single" ? "active" : ""} onClick={() => setTab("single")}>إضافة حساب واحد</button>
