@@ -373,6 +373,7 @@ button {
   display: flex;
   gap: 8px;
 }
+.withdrawBackButton { display: inline-flex; align-items: center; gap: 7px; border-color: #cbd5e1; background: white; }
 .primary,
 .secondary {
   border-radius: 10px;

@@ -165,6 +165,7 @@ test("lets the employee choose account type and separates customer and internal 
   assert.match(page,/نوع الحساب المطلوب/);
   assert.match(page,/رسالة داخلية للإدارة/);
   assert.match(page,/رجوع للسحب/);
+  assert.match(page,/رجوع للوحة التحكم/);
   assert.doesNotMatch(page,/customerAccountLines\s*=.*allocatedUses/);
   assert.match(withdrawals,/accountType:z\.enum/);
   assert.match(withdrawals,/AND account_type=\$3/);

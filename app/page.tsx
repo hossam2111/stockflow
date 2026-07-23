@@ -702,6 +702,7 @@ export default function Home() {
               access={employeeAccess}
               onWithdraw={attemptWithdrawal}
               onReset={() => { setWithdrawn(false); setWithdrawalCredentials([]); }}
+              onBack={() => setView(role === "employee" && !currentUser?.permissions?.includes("dashboard.view") ? "activity" : "dashboard")}
             />
           )}
           {view === "inventory" && (
@@ -1185,6 +1186,7 @@ function Withdraw({
   credentials,
   onWithdraw,
   onReset,
+  onBack,
   blocked,
   availableServices,
   employeeName,
@@ -1200,6 +1202,7 @@ function Withdraw({
   access: EmployeeAccessStats | null;
   onWithdraw: (details: WithdrawalCustomerDetails) => Promise<void>;
   onReset: () => void;
+  onBack: () => void;
 }) {
   const [details, setDetails] = useState<WithdrawalCustomerDetails>({
     customerName: "", customerPhone: "", customerContact: "واتساب", customerReference: "", customerNotes: "",
@@ -1259,7 +1262,9 @@ function Withdraw({
       <PageHead
         title="سحب وتسليم حساب"
         subtitle="رحلة كاملة من اختيار الخدمة إلى تسليم بيانات الحساب للعميل."
-      />
+      >
+        <button className="secondary withdrawBackButton" onClick={onBack}><ArrowLeft size={17} /> رجوع للوحة التحكم</button>
+      </PageHead>
       {blocked && <div className="blockedBanner"><i>!</i><div><b>صلاحية السحب متوقفة</b><span>قام الأدمن بإيقاف حساب {employeeName} من تنفيذ أي عمليات سحب جديدة.</span></div></div>}
       <div className="journeySteps">
         <div className="active">
