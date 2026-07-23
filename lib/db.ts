@@ -1,5 +1,5 @@
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
-import { newDb } from "pg-mem";
+import { newDb, DataType } from "pg-mem";
 
 declare global {
   var stockflowPool: Pool | undefined;
@@ -8,8 +8,6 @@ declare global {
   var stockflowCatalogueReady: Promise<void> | undefined;
   var stockflowMemory: boolean | undefined;
 }
-globalThis.stockflowPool = undefined;
-globalThis.stockflowReady = undefined;
 
 // Single source of truth for the platform-wide service catalogue, in display order. Adding a service
 // here (and bumping CATALOGUE_MARKER) makes it apply to EVERY organization on the next startup.
@@ -21,6 +19,7 @@ export const serviceCatalogue: [string, number][] = [
 ];
 const CATALOGUE_MARKER = "services-catalogue-v2";
 const PRO_APPS_SEED_MARKER_V2 = "pro-apps-demo-stock-v2";
+const SALES_BACKFILL_MARKER = "sales-ledger-backfill-v1";
 
 const schema = [
   `CREATE TABLE IF NOT EXISTS organizations (
@@ -169,7 +168,7 @@ function createPool() {
   }
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   memory.public.registerFunction({ name: "current_database", implementation: () => "stockflow" });
-  memory.public.registerFunction({ name: "nullif", implementation: (a: string | null, b: string | null) => (a === b ? null : a) });
+  memory.public.registerFunction({ name: "nullif", args: [DataType.text, DataType.text], returns: DataType.text, implementation: (a: string | null, b: string | null) => (a === b ? null : a) });
   const adapter = memory.adapters.createPg();
   globalThis.stockflowMemory = true;
   return new adapter.Pool() as unknown as Pool;
@@ -194,14 +193,22 @@ export async function ensureDb() {
       await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS access_role TEXT NOT NULL DEFAULT 'EMPLOYEE'");
       await pool.query("UPDATE users SET access_role=CASE WHEN role='ADMIN' THEN 'OWNER' WHEN can_manage_accounting THEN 'ACCOUNTANT' ELSE COALESCE(NULLIF(access_role,''),'EMPLOYEE') END");
       await pool.query("INSERT INTO organization_settings(organization_id) SELECT id FROM organizations ON CONFLICT(organization_id) DO NOTHING");
-      await pool.query(`INSERT INTO sales(id,organization_id,withdrawal_id,created_by,source,service_name,item_description,
-        customer_name,customer_phone,quantity,total_amount,cost_amount,paid_amount,status,notes,sold_at,created_at)
-        SELECT 'SALE-'||w.id,w.organization_id,w.id,w.user_id,'WITHDRAWAL',s.name,s.name,
-          COALESCE(NULLIF(w.customer_name,''),'عميل'),w.customer_phone,1,COALESCE(w.selling_price,0),
-          COALESCE(w.cost,0),COALESCE(w.paid_amount,0),CASE WHEN w.status='RETURNED' THEN 'CANCELLED' ELSE 'COMPLETED' END,
-          w.customer_notes,w.created_at::date,w.created_at
-        FROM withdrawals w JOIN services s ON s.id=w.service_id
-        ON CONFLICT(withdrawal_id) DO NOTHING`);
+      // One-time catch-up: every withdrawal created going forward already inserts its own `sales` row
+      // (see app/api/withdrawals/route.ts), so this full-table JOIN backfill is only needed once to cover
+      // withdrawals that existed before the sales ledger shipped. Gate it so it doesn't rescan the whole
+      // (unboundedly growing) withdrawals table on every cold start forever.
+      const salesBackfilled = await pool.query("SELECT 1 FROM activity_logs WHERE id=$1 LIMIT 1", [SALES_BACKFILL_MARKER]);
+      if (salesBackfilled.rows.length === 0) {
+        await pool.query(`INSERT INTO sales(id,organization_id,withdrawal_id,created_by,source,service_name,item_description,
+          customer_name,customer_phone,quantity,total_amount,cost_amount,paid_amount,status,notes,sold_at,created_at)
+          SELECT 'SALE-'||w.id,w.organization_id,w.id,w.user_id,'WITHDRAWAL',s.name,s.name,
+            COALESCE(NULLIF(w.customer_name,''),'عميل'),w.customer_phone,1,COALESCE(w.selling_price,0),
+            COALESCE(w.cost,0),COALESCE(w.paid_amount,0),CASE WHEN w.status='RETURNED' THEN 'CANCELLED' ELSE 'COMPLETED' END,
+            w.customer_notes,w.created_at::date,w.created_at
+          FROM withdrawals w JOIN services s ON s.id=w.service_id
+          ON CONFLICT(withdrawal_id) DO NOTHING`);
+        await pool.query("INSERT INTO activity_logs(id,action,metadata) VALUES ($1,'SALES_BACKFILL','{}') ON CONFLICT DO NOTHING", [SALES_BACKFILL_MARKER]);
+      }
       const seeded = await pool.query("SELECT 1 FROM activity_logs WHERE id='seed-complete-v1' LIMIT 1");
       if (seeded.rows.length > 0) return;
 
@@ -326,9 +333,10 @@ export async function ensureDb() {
         ] as const;
         for(let index=0;index<rows.length;index++){
           const [email,type,maxUsage,currentUsage]=rows[index];
+          const status=currentUsage>=maxUsage?"FULL":"AVAILABLE";
           await pool.query(`INSERT INTO inventory_items(id,organization_id,service_id,email,password,otp_secret,otp_url,account_type,max_usage,current_usage,status,expiry_date)
-            VALUES($1,$2,$3,$4,'Demo@StockFlow2026','JBSWY3DPEHPK3PXP','https://2fa.live/tok/JBSWY3DPEHPK3PXP',$5,$6,$7,CASE WHEN $7>=$6 THEN 'FULL' ELSE 'AVAILABLE' END,'2026-12-31') ON CONFLICT DO NOTHING`,
-            [`DEMO-PA-${target.organization_id.slice(0,8)}-${index+1}`,target.organization_id,target.service_id,email,type,maxUsage,currentUsage]);
+            VALUES($1,$2,$3,$4,'Demo@StockFlow2026','JBSWY3DPEHPK3PXP','https://2fa.live/tok/JBSWY3DPEHPK3PXP',$5,$6,$7,$8,'2026-12-31') ON CONFLICT DO NOTHING`,
+            [`DEMO-PA-${target.organization_id.slice(0,8)}-${index+1}`,target.organization_id,target.service_id,email,type,maxUsage,currentUsage,status]);
         }
       }
       await pool.query("INSERT INTO activity_logs(id,action,metadata) VALUES($1,'PRO_APPS_DEMO_SEED',$2) ON CONFLICT DO NOTHING",[PRO_APPS_SEED_MARKER_V2,JSON.stringify({services:targets.rows.length})]);
