@@ -101,7 +101,7 @@ test("records withdrawals in an editable sales ledger and supports manual sales"
   assert.match(sales, /requireWorkspacePermission\("sales\.view_all"\)/);
   assert.match(sales, /requireWorkspacePermission\("sales\.manage"\)/);
   assert.match(sales, /source,service_name,item_description/);
-  assert.match(sales, /WHERE id=\$11 AND organization_id=\$12/);
+  assert.match(sales, /WHERE id=\$12 AND organization_id=\$13/);
   assert.doesNotMatch(page, /بيان المبيعة/);
   assert.match(withdrawals, /INSERT INTO sales/);
   assert.match(withdrawals, /'WITHDRAWAL'/);
@@ -169,4 +169,14 @@ test("lets the employee choose account type and separates customer and internal 
   assert.doesNotMatch(page,/customerAccountLines\s*=.*allocatedUses/);
   assert.match(withdrawals,/accountType:z\.enum/);
   assert.match(withdrawals,/AND account_type=\$3/);
+});
+
+test("adds global navigation and calculates manual sales from unit values",async()=>{
+  const [page,sales]=await Promise.all([read("app/page.tsx"),read("app/api/sales/route.ts")]);
+  assert.match(page,/globalBackButton/);
+  assert.match(page,/نوع العميل/);
+  assert.match(page,/form\.unitPrice\*form\.quantity/);
+  assert.match(page,/إجمالي البيع/);
+  assert.match(sales,/customerType:z\.enum/);
+  assert.match(sales,/customer_type/);
 });
