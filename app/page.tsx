@@ -1404,7 +1404,7 @@ function Withdraw({
                       <option value={0}>بدون ضمان</option><option value={7}>7 أيام</option><option value={14}>14 يومًا</option><option value={30}>30 يومًا</option><option value={60}>60 يومًا</option><option value={90}>90 يومًا</option><option value={180}>6 شهور</option><option value={365}>سنة</option>
                     </select>
                   </label>
-                  <label>سعر البيع (ج.م)
+                  <label>سعر الحساب الواحد (ج.م)
                     <input type="number" min={0} value={details.sellingPrice || ""} onChange={(event) => setDetails({ ...details, sellingPrice: Math.max(0, Number(event.target.value) || 0) })} placeholder="0" />
                   </label>
                   <label>حالة الدفع
@@ -1414,7 +1414,7 @@ function Withdraw({
                     </select>
                   </label>
                   {!details.paidInFull && (
-                    <label>المدفوع الآن (ج.م)
+                    <label>المدفوع لكل حساب الآن (ج.م)
                       <input type="number" min={0} max={details.sellingPrice} value={details.paidAmount || ""} onChange={(event) => setDetails({ ...details, paidAmount: Math.max(0, Math.min(details.sellingPrice, Number(event.target.value) || 0)) })} placeholder="0" />
                       <small>المتبقي على العميل: {Math.max(0, details.sellingPrice - details.paidAmount)} ج.م لكل حساب</small>
                     </label>
@@ -2848,12 +2848,12 @@ const emptySale = () => ({ customerName:"",customerPhone:"",customerType:"NEW" a
 function Sales({flash,services}:{flash:(message:string)=>void;services:ServiceRecord[]}){
   const [sales,setSales]=useState<SaleRow[]>([]);const [form,setForm]=useState(emptySale);const [editing,setEditing]=useState<string|null>(null);const [version,setVersion]=useState(0);const [saving,setSaving]=useState(false);
   useEffect(()=>{fetch("/api/sales").then(r=>r.ok?r.json():Promise.reject()).then(d=>setSales(d.sales)).catch(()=>setSales([]));},[version]);
-  const total=sales.filter(s=>s.status!=="CANCELLED").reduce((n,s)=>n+Number(s.total_amount),0);const paid=sales.filter(s=>s.status!=="CANCELLED").reduce((n,s)=>n+Number(s.paid_amount),0);const profit=sales.filter(s=>s.status!=="CANCELLED").reduce((n,s)=>n+Number(s.total_amount)-Number(s.cost_amount),0);
+  const confirmedSales=sales.filter(s=>s.status==="COMPLETED");const total=confirmedSales.reduce((n,s)=>n+Number(s.total_amount),0);const paid=confirmedSales.reduce((n,s)=>n+Number(s.paid_amount),0);const profit=confirmedSales.reduce((n,s)=>n+Number(s.total_amount)-Number(s.cost_amount),0);
   const formTotal=form.unitPrice*form.quantity,formCost=form.unitCost*form.quantity,formRemaining=Math.max(0,formTotal-form.paidAmount),formProfit=formTotal-formCost;
-  async function save(){if(!form.customerName.trim()||!form.serviceName.trim()){flash("اختر الخدمة واكتب اسم العميل");return;}if(form.paidAmount>formTotal){flash("المدفوع لا يمكن أن يتجاوز الإجمالي");return;}setSaving(true);const response=await fetch(`/api/sales${editing?`?id=${encodeURIComponent(editing)}`:""}`,{method:editing?"PATCH":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...form,totalAmount:formTotal,costAmount:formCost})});setSaving(false);if(!response.ok){flash("تعذر حفظ المبيعة — راجع البيانات والمبالغ");return;}setForm(emptySale());setEditing(null);setVersion(v=>v+1);flash(editing?"تم تعديل المبيعة":"تم تسجيل المبيعة");}
+  async function save(){if(!form.customerName.trim()||!form.serviceName.trim()){flash("اختر الخدمة واكتب اسم العميل");return;}if(form.paidAmount>formTotal){flash("المدفوع لا يمكن أن يتجاوز الإجمالي");return;}setSaving(true);const response=await fetch(`/api/sales${editing?`?id=${encodeURIComponent(editing)}`:""}`,{method:editing?"PATCH":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...form,totalAmount:formTotal,costAmount:formCost})});const result=await response.json().catch(()=>({}));setSaving(false);if(!response.ok){flash(result.error==="WITHDRAWAL_SALE_LOCKED"?"مبيعات السحب تُعدّل من سجل السحب لحماية الحسابات":"تعذر حفظ المبيعة — راجع البيانات والمبالغ");return;}setForm(emptySale());setEditing(null);setVersion(v=>v+1);flash(editing?"تم تعديل المبيعة":"تم تسجيل المبيعة");}
   function edit(s:SaleRow){const quantity=Math.max(1,Number(s.quantity));setEditing(s.id);setForm({customerName:s.customer_name,customerPhone:s.customer_phone??"",customerType:s.customer_type??"NEW",serviceName:s.service_name??s.item_description,quantity,unitPrice:Number(s.total_amount)/quantity,unitCost:Number(s.cost_amount)/quantity,paidAmount:Number(s.paid_amount),status:s.status,notes:s.notes??"",soldAt:String(s.sold_at).slice(0,10)});window.scrollTo({top:0,behavior:"smooth"});}
   function selectService(serviceName:string){const service=services.find(item=>item.name===serviceName);setForm(current=>({...current,serviceName,unitCost:service?Number(service.default_cost):current.unitCost}));}
-  async function remove(id:string){if(!window.confirm("حذف هذه المبيعة؟"))return;const r=await fetch(`/api/sales?id=${encodeURIComponent(id)}`,{method:"DELETE"});if(r.ok){setVersion(v=>v+1);flash("تم حذف المبيعة");}}
+  async function remove(id:string){if(!window.confirm("حذف هذه المبيعة اليدوية؟"))return;const r=await fetch(`/api/sales?id=${encodeURIComponent(id)}`,{method:"DELETE"});const result=await r.json().catch(()=>({}));if(r.ok){setVersion(v=>v+1);flash("تم حذف المبيعة");}else flash(result.error==="WITHDRAWAL_SALE_LOCKED"?"لا يمكن حذف مبيعة مرتبطة بسحب — استخدم إرجاع السحب":"تعذر حذف المبيعة");}
   return <>
     <PageHead title="المبيعات" subtitle="سجل موحد للمبيعات التلقائية من السحب والمبيعات اليدوية." />
     <div className="metrics compact"><Metric icon={ShoppingCart} label="إجمالي المبيعات" value={`${total.toLocaleString("ar-EG")} ج.م`} change={`${sales.length} عملية`} note="يدوي وتلقائي" tone="blue"/><Metric icon={Wallet} label="المحصّل" value={`${paid.toLocaleString("ar-EG")} ج.م`} change={`${Math.max(0,total-paid).toLocaleString("ar-EG")} متبقي`} note="النقدية المحصلة" tone="green"/><Metric icon={TrendingUp} label="مجمل الربح" value={`${profit.toLocaleString("ar-EG")} ج.م`} change="قبل المصروفات" note="البيع − التكلفة" tone="purple"/></div>
@@ -2899,7 +2899,7 @@ function PeriodFilter({ preset, setPreset, custom, setCustom }: {
 }
 
 type AccountingData = {
-  summary: { revenue: number; collected: number; cost: number; outstanding: number; expenses: number; grossProfit: number; netProfit: number; treasury: number; sales: number };
+  summary: { revenue: number; collected: number; cost: number; outstanding: number; expenses: number; wages: number; supplierPayments: number; grossProfit: number; netProfit: number; treasury: number; sales: number };
   perService: { name: string; revenue: number; cost: number; profit: number; sales: number }[];
   perEmployee: { name: string; revenue: number; profit: number; sales: number }[];
   debts: { customer: string; customer_name: string; total: number; paid: number; remaining: number; sales: number }[];
@@ -2955,10 +2955,10 @@ function Accounting({ flash, dataVersion, onChanged }: { flash: (s: string) => v
         <Metric icon={TrendingUp} label="الإيراد" value={money(s?.revenue)} change={`${s?.sales ?? 0} عملية`} note="إجمالي المبيعات" tone="blue" />
         <Metric icon={Boxes} label="التكلفة" value={money(s?.cost)} change="تكلفة البضاعة" note="حسب تكلفة الخدمة" tone="orange" />
         <Metric icon={Wallet} label="مجمل الربح" value={money(s?.grossProfit)} change="الإيراد − التكلفة" note="قبل المصروفات" tone="green" />
-        <Metric icon={FileBarChart} label="صافي الربح" value={money(s?.netProfit)} change={`− ${money(s?.expenses)} مصروفات`} note="بعد المصروفات" tone="purple" />
+        <Metric icon={FileBarChart} label="صافي الربح" value={money(s?.netProfit)} change={`− ${money((s?.expenses??0)+(s?.wages??0))} تشغيل ورواتب`} note="بعد المصروفات والرواتب" tone="purple" />
       </div>
       <div className="metrics">
-        <Metric icon={Wallet} label="الخزينة" value={money(s?.treasury)} change="محصّل − مصروفات" note="النقدية المتاحة" tone="green" />
+        <Metric icon={Wallet} label="الخزينة" value={money(s?.treasury)} change="المحصّل − كل المدفوعات" note="بعد المصروفات والرواتب والموردين" tone="green" />
         <Metric icon={PackageCheck} label="المحصّل" value={money(s?.collected)} change="مدفوع" note="من العملاء" tone="blue" />
         <Metric icon={AlertTriangle} label="مستحقات (آجل)" value={money(s?.outstanding)} change="غير محصّل" note="ديون العملاء" tone="orange" />
         <Metric icon={TrendingUp} label="المصروفات" value={money(s?.expenses)} change="مصروفات الفترة" note="إجمالي الخرج" tone="purple" />

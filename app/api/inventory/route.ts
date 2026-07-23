@@ -27,7 +27,8 @@ export async function GET(request: Request) {
     (i.otp_secret IS NOT NULL) AS otp_ready FROM inventory_items i JOIN services s ON s.id=i.service_id
     WHERE ${filters.join(" AND ")}
     ORDER BY i.created_at DESC LIMIT 200`, values);
-  return NextResponse.json({ items: result.rows });
+  const canSeeCredentials=context.access.accessRole!=="AUDITOR";
+  return NextResponse.json({ items: result.rows.map(item=>canSeeCredentials?item:{...item,password:null,otp_secret:null,otp_url:null,otp_ready:false}) });
 }
 
 export async function POST(request: Request) {
@@ -39,11 +40,17 @@ export async function POST(request: Request) {
   const remaining=Math.max(0,(organization.rows[0]?.inventory_limit??0)-(inventoryCount.rows[0]?.total??0));
   if(remaining<=0)return NextResponse.json({error:"INVENTORY_LIMIT_REACHED"},{status:403});
   const acceptedRows=rows.data.slice(0,remaining);
+  const serviceRules=new Map<string,boolean>();
+  for(const item of acceptedRows){
+    if(!serviceRules.has(item.serviceId)){
+      const service=await query<{id:string;requires_otp:boolean}>("SELECT id,requires_otp FROM services WHERE id=$1 AND organization_id=$2",[item.serviceId,context.organizationId]);
+      if(!service.rows[0])return NextResponse.json({error:"SERVICE_NOT_FOUND",serviceId:item.serviceId},{status:400});
+      serviceRules.set(item.serviceId,service.rows[0].requires_otp);
+    }
+    if(serviceRules.get(item.serviceId)&&!item.otpSecret)return NextResponse.json({error:"OTP_REQUIRED",serviceId:item.serviceId},{status:400});
+  }
   let inserted=0, duplicates=0;
   for (const item of acceptedRows) {
-    const service=await query<{id:string;requires_otp:boolean}>("SELECT id,requires_otp FROM services WHERE id=$1 AND organization_id=$2",[item.serviceId,context.organizationId]);
-    if(!service.rows[0])continue;
-    if(service.rows[0].requires_otp&&!item.otpSecret)return NextResponse.json({error:"OTP_REQUIRED",serviceId:item.serviceId},{status:400});
     const existing=await query("SELECT id FROM inventory_items WHERE organization_id=$1 AND service_id=$2 AND LOWER(email)=LOWER($3) LIMIT 1",[context.organizationId,item.serviceId,item.email]);
     if(existing.rows[0]){duplicates++;continue;}
     const result = await query(`INSERT INTO inventory_items(id,organization_id,service_id,email,password,otp_secret,otp_url,account_type,max_usage)

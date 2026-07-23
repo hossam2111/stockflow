@@ -30,12 +30,11 @@ export async function GET() {
       FROM withdrawals w JOIN users u ON u.id=w.user_id JOIN services s ON s.id=w.service_id
       WHERE w.organization_id=$1 AND w.status='COMPLETED'
       ORDER BY w.created_at DESC LIMIT 4`,[context.organizationId]),
-    query("SELECT COALESCE(SUM(selling_price),0)::int AS revenue FROM withdrawals WHERE organization_id=$1 AND status='COMPLETED' AND created_at >= $2",[context.organizationId,startOfDay]),
-    query("SELECT COALESCE(SUM(selling_price),0)::int AS revenue FROM withdrawals WHERE organization_id=$1 AND status='COMPLETED' AND created_at >= $2",[context.organizationId,startOfMonth]),
-    query(`SELECT s.name,COALESCE(SUM(w.selling_price),0)::int AS revenue
-      FROM withdrawals w JOIN services s ON s.id=w.service_id
-      WHERE w.organization_id=$1 AND w.status='COMPLETED' AND w.created_at>=$2
-      GROUP BY s.name HAVING COALESCE(SUM(w.selling_price),0)>0
+    query("SELECT COALESCE(SUM(total_amount),0)::int AS revenue FROM sales WHERE organization_id=$1 AND status='COMPLETED' AND created_at >= $2",[context.organizationId,startOfDay]),
+    query("SELECT COALESCE(SUM(total_amount),0)::int AS revenue FROM sales WHERE organization_id=$1 AND status='COMPLETED' AND created_at >= $2",[context.organizationId,startOfMonth]),
+    query(`SELECT COALESCE(NULLIF(service_name,''),item_description) AS name,COALESCE(SUM(total_amount),0)::int AS revenue
+      FROM sales WHERE organization_id=$1 AND status='COMPLETED' AND created_at>=$2
+      GROUP BY COALESCE(NULLIF(service_name,''),item_description) HAVING COALESCE(SUM(total_amount),0)>0
       ORDER BY revenue DESC LIMIT 4`,[context.organizationId,startOfMonth]),
   ]);
   const counts = new Map(trendRows.rows.map((row) => [String(row.day),Number(row.count)]));

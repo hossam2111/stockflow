@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   const org=context.organizationId;
 
   // Build shared date filters. w.* for withdrawals, e.* handled separately for expenses.
-  const wValues:unknown[]=[org]; const wFilters=["s.organization_id=$1","s.status<>'CANCELLED'"];
+  const wValues:unknown[]=[org]; const wFilters=["s.organization_id=$1","s.status='COMPLETED'"];
   if(from){wValues.push(from);wFilters.push(`s.sold_at>=$${wValues.length}::date`);}
   if(to){wValues.push(to);wFilters.push(`s.sold_at<=$${wValues.length}::date`);}
   const wWhere=wFilters.join(" AND ");
@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   if(to){eValues.push(to);eFilters.push(`spent_at<=$${eValues.length}::date`);}
   const eWhere=eFilters.join(" AND ");
 
-  const [summary, expensesAgg, perService, perEmployee, debts, expensesByCategory] = await Promise.all([
+  const [summary, expensesAgg, wagesAgg, supplierPaidAgg, perService, perEmployee, debts, expensesByCategory] = await Promise.all([
     query(`SELECT
       COALESCE(SUM(s.total_amount),0)::int AS revenue,
       COALESCE(SUM(s.paid_amount),0)::int AS collected,
@@ -28,6 +28,8 @@ export async function GET(request: Request) {
       COUNT(*)::int AS sales
       FROM sales s WHERE ${wWhere}`, wValues),
     query(`SELECT COALESCE(SUM(amount),0)::int AS total FROM expenses WHERE ${eWhere}`, eValues),
+    query(`SELECT COALESCE(SUM(amount),0)::int AS total FROM wages WHERE ${eWhere.replaceAll("spent_at","paid_at")}`, eValues),
+    query(`SELECT COALESCE(SUM(paid),0)::int AS total FROM purchases WHERE ${eWhere.replaceAll("spent_at","purchased_at")}`, eValues),
     query(`SELECT COALESCE(NULLIF(s.service_name,''),s.item_description) AS name,
       COALESCE(SUM(s.total_amount),0)::int AS revenue,
       COALESCE(SUM(s.cost_amount),0)::int AS cost,
@@ -58,14 +60,16 @@ export async function GET(request: Request) {
 
   const s=summary.rows[0] as { revenue:number; collected:number; cost:number; outstanding:number; sales:number };
   const expenses=(expensesAgg.rows[0] as { total:number }).total;
+  const wages=(wagesAgg.rows[0] as { total:number }).total;
+  const supplierPayments=(supplierPaidAgg.rows[0] as { total:number }).total;
   const grossProfit=s.revenue - s.cost;
-  const netProfit=grossProfit - expenses;
-  const treasury=s.collected - expenses; // cash actually collected minus what we spent
+  const netProfit=grossProfit - expenses - wages;
+  const treasury=s.collected - expenses - wages - supplierPayments;
 
   return NextResponse.json({
     summary: {
       revenue: s.revenue, collected: s.collected, cost: s.cost, outstanding: s.outstanding,
-      expenses, grossProfit, netProfit, treasury, sales: s.sales,
+      expenses, wages, supplierPayments, grossProfit, netProfit, treasury, sales: s.sales,
     },
     perService: perService.rows,
     perEmployee: perEmployee.rows,

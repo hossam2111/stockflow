@@ -25,6 +25,9 @@ export async function getWorkspaceContext(){
 export async function requireWorkspaceAdmin(){
   const context=await getWorkspaceContext();
   if(!context||context.session.role!=="ADMIN"||!context.organizationId)return null;
+  const {query}=await import("@/lib/db");
+  const active=await query<{user_active:boolean;organization_active:boolean}>("SELECT u.active AS user_active,o.active AS organization_active FROM users u JOIN organizations o ON o.id=$2 WHERE u.id=$1",[context.session.id,context.organizationId]);
+  if(!active.rows[0]?.user_active||!active.rows[0]?.organization_active)return null;
   return context;
 }
 
@@ -40,6 +43,9 @@ export async function requireWorkspaceAccounting(){
 export async function requireWorkspacePermission(permission:PermissionKey){
   const context=await getWorkspaceContext();
   if(!context?.organizationId)return null;
+  const {query}=await import("@/lib/db");
+  const active=await query<{user_active:boolean;organization_active:boolean}>("SELECT u.active AS user_active,o.active AS organization_active FROM users u JOIN organizations o ON o.id=$2 WHERE u.id=$1",[context.session.id,context.organizationId]);
+  if(!active.rows[0]?.user_active||!active.rows[0]?.organization_active)return null;
   const {getUserAccess}=await import("@/lib/access-control");
   const access=await getUserAccess(context.session.id,context.organizationId,context.session.role);
   return access.permissions.includes(permission)?{...context,access}:null;

@@ -180,3 +180,15 @@ test("adds global navigation and calculates manual sales from unit values",async
   assert.match(sales,/customerType:z\.enum/);
   assert.match(sales,/customer_type/);
 });
+
+test("keeps financial ledgers consistent and excludes pending sales",async()=>{
+  const [sales,accounting,payments,dashboard,inventory,page]=await Promise.all([read("app/api/sales/route.ts"),read("app/api/accounting/route.ts"),read("app/api/payments/route.ts"),read("app/api/dashboard/route.ts"),read("app/api/inventory/route.ts"),read("app/page.tsx")]);
+  assert.match(sales,/WITHDRAWAL_SALE_LOCKED/);
+  assert.match(accounting,/s\.status='COMPLETED'/);
+  assert.match(accounting,/supplierPayments/);
+  assert.match(accounting,/wages/);
+  assert.match(payments,/status='COMPLETED'/);
+  assert.match(dashboard,/FROM sales WHERE organization_id/);
+  assert.match(inventory,/accessRole!=="AUDITOR"/);
+  assert.match(page,/confirmedSales/);
+});

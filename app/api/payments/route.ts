@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     const result=await transaction(async client=>{
       const outstanding=await client.query<{ id: string; remaining: number }>(
         `SELECT id, withdrawal_id, (total_amount-paid_amount) AS remaining FROM sales
-         WHERE organization_id=$1 AND status<>'CANCELLED' AND ${matchCol}=$2 AND total_amount>paid_amount
+         WHERE organization_id=$1 AND status='COMPLETED' AND ${matchCol}=$2 AND total_amount>paid_amount
          ORDER BY sold_at ASC,created_at ASC FOR UPDATE`, [context.organizationId, matchVal]);
       let left=parsed.data.amount; let applied=0;
       for(const row of outstanding.rows){
