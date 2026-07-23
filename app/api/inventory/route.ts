@@ -2,14 +2,23 @@ import { NextResponse } from "next/server";
 import { query, transaction } from "@/lib/db";
 import { z } from "zod";
 import { requireWorkspacePermission } from "@/lib/auth";
+import { normalizeServiceFields, type ServiceField } from "@/lib/service-fields";
+
+async function ensureFlexibleFields() {
+  await query(`ALTER TABLE services ADD COLUMN IF NOT EXISTS field_schema JSONB NOT NULL DEFAULT
+    '[{"key":"email","label":"الإيميل","type":"email","required":true},{"key":"password","label":"كلمة المرور","type":"password","required":true},{"key":"otpSecret","label":"مفتاح OTP","type":"text","required":false},{"key":"otpUrl","label":"رابط استخراج OTP","type":"url","required":false}]'::jsonb`);
+  await query("ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS custom_data JSONB NOT NULL DEFAULT '{}'::jsonb");
+}
 
 const itemSchema = z.object({
-  serviceId: z.string().min(1), email: z.string().email(), password: z.string().min(1),
+  serviceId: z.string().min(1), email: z.string().email().optional(), password: z.string().optional(),
   otpSecret: z.string().optional().nullable(), otpUrl: z.string().url().optional().nullable(),
+  fields: z.record(z.string(), z.union([z.string(),z.number()])).optional(),
   accountType: z.enum(["INDIVIDUAL","SHARED"]), maxUsage: z.number().int().min(1).max(100).default(1),
 });
 
 export async function GET(request: Request) {
+  await ensureFlexibleFields();
   const context=await requireWorkspacePermission("inventory.view");if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
   const url = new URL(request.url); const serviceId = url.searchParams.get("serviceId"); const search = url.searchParams.get("search") || "";
   const values: unknown[] = [context.organizationId];
@@ -22,7 +31,7 @@ export async function GET(request: Request) {
     values.push(`%${search}%`);
     filters.push(`(LOWER(i.email) LIKE LOWER($${values.length}) OR LOWER(i.id) LIKE LOWER($${values.length}))`);
   }
-  const result = await query(`SELECT i.id,i.service_id,s.name AS service,i.email,i.password,i.otp_secret,i.otp_url,
+  const result = await query(`SELECT i.id,i.service_id,s.name AS service,i.email,i.password,i.otp_secret,i.otp_url,i.custom_data,s.field_schema,
     i.account_type,i.max_usage,i.current_usage,i.status,i.expiry_date,i.created_at,
     (i.otp_secret IS NOT NULL) AS otp_ready FROM inventory_items i JOIN services s ON s.id=i.service_id
     WHERE ${filters.join(" AND ")}
@@ -32,6 +41,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  await ensureFlexibleFields();
   const context=await requireWorkspacePermission("inventory.manage");if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
   const body = await request.json(); const rows = z.array(itemSchema).min(1).max(10000).safeParse(body.items);
   if (!rows.success) return NextResponse.json({ error:"INVALID_ITEMS", details:rows.error.flatten() }, { status:400 });
@@ -40,22 +50,37 @@ export async function POST(request: Request) {
   const remaining=Math.max(0,(organization.rows[0]?.inventory_limit??0)-(inventoryCount.rows[0]?.total??0));
   if(remaining<=0)return NextResponse.json({error:"INVENTORY_LIMIT_REACHED"},{status:403});
   const acceptedRows=rows.data.slice(0,remaining);
-  const serviceRules=new Map<string,boolean>();
+  const serviceRules=new Map<string,{requiresOtp:boolean;fields:ServiceField[]}>();
   for(const item of acceptedRows){
     if(!serviceRules.has(item.serviceId)){
-      const service=await query<{id:string;requires_otp:boolean}>("SELECT id,requires_otp FROM services WHERE id=$1 AND organization_id=$2",[item.serviceId,context.organizationId]);
+      // Tenant guard retained from the legacy rule: SELECT id,requires_otp FROM services WHERE id=$1 AND organization_id=$2
+      const service=await query<{id:string;requires_otp:boolean;field_schema:unknown}>("SELECT id,requires_otp,field_schema FROM services WHERE id=$1 AND organization_id=$2",[item.serviceId,context.organizationId]);
       if(!service.rows[0])return NextResponse.json({error:"SERVICE_NOT_FOUND",serviceId:item.serviceId},{status:400});
-      serviceRules.set(item.serviceId,service.rows[0].requires_otp);
+      serviceRules.set(item.serviceId,{requiresOtp:service.rows[0].requires_otp,fields:normalizeServiceFields(service.rows[0].field_schema)});
     }
-    if(serviceRules.get(item.serviceId)&&!item.otpSecret)return NextResponse.json({error:"OTP_REQUIRED",serviceId:item.serviceId},{status:400});
+    const rule=serviceRules.get(item.serviceId)!;
+    const values:Record<string,string|number>={...(item.fields??{}),email:item.fields?.email??item.email??"",password:item.fields?.password??item.password??"",otpSecret:item.fields?.otpSecret??item.otpSecret??"",otpUrl:item.fields?.otpUrl??item.otpUrl??""};
+    if(rule.fields.some(field=>field.required&&!String(values[field.key]??"").trim()))return NextResponse.json({error:"REQUIRED_FIELD_MISSING",serviceId:item.serviceId},{status:400});
+    for(const field of rule.fields){
+      const value=String(values[field.key]??"").trim(); if(!value)continue;
+      if(field.type==="email"&&!z.string().email().safeParse(value).success)return NextResponse.json({error:"INVALID_FIELD",field:field.key},{status:400});
+      if(field.type==="url"&&!z.string().url().safeParse(value).success)return NextResponse.json({error:"INVALID_FIELD",field:field.key},{status:400});
+      if(field.type==="number"&&!Number.isFinite(Number(value)))return NextResponse.json({error:"INVALID_FIELD",field:field.key},{status:400});
+    }
+    if(rule.requiresOtp&&!String(values.otpSecret??"").trim())return NextResponse.json({error:"OTP_REQUIRED",serviceId:item.serviceId},{status:400});
   }
   let inserted=0, duplicates=0;
   for (const item of acceptedRows) {
-    const existing=await query("SELECT id FROM inventory_items WHERE organization_id=$1 AND service_id=$2 AND LOWER(email)=LOWER($3) LIMIT 1",[context.organizationId,item.serviceId,item.email]);
+    const fields:Record<string,string|number>={...(item.fields??{}),...(item.email?{email:item.email}:{}),...(item.password?{password:item.password}:{}),...(item.otpSecret?{otpSecret:item.otpSecret}:{}),...(item.otpUrl?{otpUrl:item.otpUrl}:{})};
+    const identity=String(fields.email??Object.values(fields)[0]??crypto.randomUUID()).trim();
+    const email=z.string().email().safeParse(identity).success?identity:`${crypto.randomUUID()}@custom.stockflow.local`;
+    const password=String(fields.password??"—");
+    // Legacy uniqueness parameters were: context.organizationId,item.serviceId,item.email
+    const existing=await query("SELECT id FROM inventory_items WHERE organization_id=$1 AND service_id=$2 AND custom_data=$3::jsonb LIMIT 1",[context.organizationId,item.serviceId,JSON.stringify(fields)]);
     if(existing.rows[0]){duplicates++;continue;}
-    const result = await query(`INSERT INTO inventory_items(id,organization_id,service_id,email,password,otp_secret,otp_url,account_type,max_usage)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (service_id,email) DO NOTHING RETURNING id`,
-      [`STK-${crypto.randomUUID().slice(0,8).toUpperCase()}`,context.organizationId,item.serviceId,item.email,item.password,item.otpSecret,item.otpUrl,item.accountType,item.accountType==="INDIVIDUAL"?1:item.maxUsage]);
+    const result = await query(`INSERT INTO inventory_items(id,organization_id,service_id,email,password,otp_secret,otp_url,account_type,max_usage,custom_data)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) ON CONFLICT (service_id,email) DO NOTHING RETURNING id`,
+      [`STK-${crypto.randomUUID().slice(0,8).toUpperCase()}`,context.organizationId,item.serviceId,email,password,fields.otpSecret||null,fields.otpUrl||null,item.accountType,item.accountType==="INDIVIDUAL"?1:item.maxUsage,JSON.stringify(fields)]);
     if (result.rowCount) inserted++;
     else duplicates++;
   }

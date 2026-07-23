@@ -127,6 +127,7 @@ type ServiceRecord = {
   default_daily_limit: number;
   default_cost: number;
   requires_otp: boolean;
+  field_schema: ServiceField[];
   total: number;
   available: number;
   available_slots: number;
@@ -135,6 +136,13 @@ type ServiceRecord = {
   total_capacity: number;
   used_slots: number;
   shared_accounts: number;
+};
+
+type ServiceField = {
+  key: string;
+  label: string;
+  type: "text" | "email" | "password" | "url" | "number";
+  required: boolean;
 };
 
 type WithdrawalCredentials = {
@@ -390,6 +398,7 @@ export default function Home() {
   const [withdrawalCredentials, setWithdrawalCredentials] = useState<WithdrawalCredentials[]>([]);
   const [dataVersion, setDataVersion] = useState(0);
   const [addServiceOpen, setAddServiceOpen] = useState(false);
+  const [editingService, setEditingService] = useState<ServiceRecord | null>(null);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [allowedServiceIds, setAllowedServiceIds] = useState<string[]>([]);
   const [employeeAccess, setEmployeeAccess] = useState<EmployeeAccessStats | null>(null);
@@ -749,6 +758,7 @@ export default function Home() {
             <Services
               records={serviceData}
               onAdd={() => setAddServiceOpen(true)}
+              onEdit={(service) => setEditingService(service)}
               onView={(service) => { setQuery(service); setView("inventory"); }}
               onImport={(service) => {
                 setImportService(service);
@@ -779,7 +789,7 @@ export default function Home() {
           onImported={() => { setDataVersion((value) => value + 1); setImportOpen(false); }}
         />
       )}
-      {addServiceOpen && <AddServiceModal onClose={() => setAddServiceOpen(false)} onCreated={(message) => { flash(message); setAddServiceOpen(false); setDataVersion((value) => value + 1); }} />}
+      {(addServiceOpen || editingService) && <AddServiceModal service={editingService} onClose={() => { setAddServiceOpen(false); setEditingService(null); }} onCreated={(message) => { flash(message); setAddServiceOpen(false); setEditingService(null); setDataVersion((value) => value + 1); }} />}
     </main>
   );
 }
@@ -1891,13 +1901,19 @@ function ImportModal({
   const [saving,setSaving]=useState(false);
   const [fileName, setFileName] = useState("");
   const [fileError, setFileError] = useState("");
-  const [single, setSingle] = useState({ email: "", password: "", otpSecret: "", otpUrl: "" });
+  const [single, setSingle] = useState<Record<string,string>>({});
   const selectedService = serviceRecords.find((service) => service.name === serviceName);
-  const requiresOtp = Boolean(selectedService?.requires_otp);
+  const serviceFields:ServiceField[]=selectedService?.field_schema?.length?selectedService.field_schema:[{key:"email",label:"الإيميل",type:"email",required:true},{key:"password",label:"كلمة المرور",type:"password",required:true}];
   const fileRef = useRef<HTMLInputElement>(null);
-  const sourceRows = tab === "single" ? (single.email || single.password ? [`${single.email} | ${single.password} | ${single.otpSecret} | ${single.otpUrl}`] : []) : rows.trim().split(/\r?\n/).filter(Boolean);
+  const sourceRows = tab === "single" ? (Object.values(single).some(Boolean) ? [serviceFields.map(field=>single[field.key]??"").join(" | ")] : []) : rows.trim().split(/\r?\n/).filter(Boolean);
   const parsedRows = sourceRows.map((line) => line.split("|").map((value) => value.trim()));
-  const validRows = parsedRows.filter(([email, password, otpSecret, otpUrl]) => /^\S+@\S+\.\S+$/.test(email || "") && Boolean(password) && (!requiresOtp || Boolean(otpSecret)) && (!otpUrl || /^https?:\/\//i.test(otpUrl)));
+  const validRows = parsedRows.filter(values => serviceFields.every((field,index)=>{
+    const value=values[index]??"";if(field.required&&!value)return false;if(!value)return true;
+    if(field.type==="email")return /^\S+@\S+\.\S+$/.test(value);
+    if(field.type==="url")return /^https?:\/\//i.test(value);
+    if(field.type==="number")return Number.isFinite(Number(value));
+    return true;
+  }));
   const count = validRows.length;
   const invalidCount = parsedRows.length - validRows.length;
 
@@ -1917,16 +1933,13 @@ function ImportModal({
       }
       const headerIndex = matrix.findIndex((row) => {
         const values = row.map((value) => String(value ?? "").trim().toLowerCase());
-        return values.some((value) => value.includes("email") || value.includes("الإيميل"))
-          && values.some((value) => value.includes("password") || value.includes("كلمة المرور"));
+        return serviceFields.some((field) => values.some((value) => value.includes(field.label.toLowerCase()) || value === field.key.toLowerCase()));
       });
       if (headerIndex >= 0) matrix = matrix.slice(headerIndex + 1);
 
-      // Excel templates may contain title and instruction rows before the real
-      // data table. Only import rows that actually start with an email address.
       const normalized = matrix
-        .filter((row) => /^\S+@\S+\.\S+$/.test(String(row[0] ?? "").trim()))
-        .map((row) => row.slice(0, 4).map((value) => String(value ?? "").trim()).join(" | "))
+        .filter((row) => row.some((value) => String(value ?? "").trim()))
+        .map((row) => row.slice(0, serviceFields.length).map((value) => String(value ?? "").trim()).join(" | "))
         .join("\n");
       setRows(normalized);
       if (!normalized) setFileError("الملف لا يحتوي على صفوف قابلة للاستيراد");
@@ -1937,7 +1950,7 @@ function ImportModal({
   async function importAccounts(){
     if (!count || invalidCount) { flash("راجع الإيميل والباسورد ورابط OTP في الصفوف غير الصحيحة"); return; }
     const selectedId = serviceRecords.find((service) => service.name === serviceName)?.id ?? serviceIds[serviceName];
-    const items=validRows.map(([email,password,otpSecret,otpUrl])=>({serviceId:selectedId,email,password,otpSecret:otpSecret||null,otpUrl:otpUrl||null,accountType,maxUsage:accountType==="SHARED"?Math.max(1,Math.min(100,sharedMaxUsage)):1}));
+    const items=validRows.map(values=>({serviceId:selectedId,fields:Object.fromEntries(serviceFields.map((field,index)=>[field.key,values[index]??""])),accountType,maxUsage:accountType==="SHARED"?Math.max(1,Math.min(100,sharedMaxUsage)):1}));
     setSaving(true);
     try {
       const response=await fetch("/api/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items})});
@@ -1988,19 +2001,7 @@ function ImportModal({
           )}
         </div>
         <div className="fieldMap">
-          <div>
-            <span>1</span>
-            <b>الإيميل</b>
-            <em>مطلوب</em>
-          </div>
-          <i>←</i>
-          <div>
-            <span>2</span>
-            <b>كلمة المرور</b>
-            <em>مطلوب</em>
-          </div>
-          <i>←</i>
-          {requiresOtp && <><div><span>3</span><b>مفتاح OTP</b><em>مطلوب</em></div><i>←</i><div><span>4</span><b>رابط OTP</b><em>اختياري</em></div></>}
+          {serviceFields.map((field,index)=><div key={field.key}><span>{index+1}</span><b>{field.label}</b><em>{field.required?"مطلوب":"اختياري"}</em></div>)}
         </div>
         <div className="importTabs">
           <button className={tab === "single" ? "active" : ""} onClick={() => setTab("single")}>إضافة حساب واحد</button>
@@ -2019,9 +2020,7 @@ function ImportModal({
         </div>
         {tab === "single" ? (
           <div className="singleAccountForm">
-            <label>الإيميل *<input type="email" value={single.email} onChange={(event) => setSingle({ ...single, email: event.target.value })} placeholder="account@example.com" dir="ltr" /></label>
-            <label>كلمة المرور *<input value={single.password} onChange={(event) => setSingle({ ...single, password: event.target.value })} placeholder="Password" dir="ltr" /></label>
-            {requiresOtp && <><label>مفتاح OTP *<input value={single.otpSecret} onChange={(event) => setSingle({ ...single, otpSecret: event.target.value })} placeholder="JBSWY3DPEHPK3PXP" dir="ltr" /></label><label>موقع استخراج OTP<input type="url" value={single.otpUrl} onChange={(event) => setSingle({ ...single, otpUrl: event.target.value })} placeholder="https://2fa.live" dir="ltr" /></label></>}
+            {serviceFields.map((field)=><label key={field.key}>{field.label} {field.required?"*":""}<input type={field.type==="password"?"password":field.type} value={single[field.key]??""} onChange={(event)=>setSingle({...single,[field.key]:event.target.value})} dir="ltr"/></label>)}
           </div>
         ) : tab === "paste" ? (
           <>
@@ -2091,6 +2090,7 @@ function Services({
   onView,
   flash,
   onUpdated,
+  onEdit,
 }: {
   onImport: (service: string) => void;
   records: ServiceRecord[];
@@ -2098,11 +2098,19 @@ function Services({
   onView: (service: string) => void;
   flash: (s: string) => void;
   onUpdated: () => void;
+  onEdit: (service: ServiceRecord) => void;
 }) {
   async function saveCost(id: string, value: number) {
     const res = await fetch(`/api/services?id=${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ defaultCost: value }) });
     if (!res.ok) { flash("تعذر حفظ التكلفة"); return; }
     flash("تم حفظ سعر التكلفة"); onUpdated();
+  }
+  async function deleteService(service: ServiceRecord) {
+    if (!confirm(`حذف خدمة ${service.name} وكل مخزونها؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+    const response=await fetch(`/api/services?id=${encodeURIComponent(service.id)}`,{method:"DELETE"});
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok){flash(result.error==="SERVICE_HAS_HISTORY"?"لا يمكن حذف خدمة لها مبيعات أو سحوبات سابقة. أوقفها بدلًا من ذلك.":"تعذر حذف الخدمة");return;}
+    flash(`تم حذف خدمة ${service.name}`);onUpdated();
   }
   const cards = records.length ? records.map((record, index) => {
     const preset = services.find((service) => service.name === record.name);
@@ -2155,6 +2163,8 @@ function Services({
             <footer>
               <ServiceCostEditor key={`${s.id}-${s.defaultCost}`} id={s.id} cost={s.defaultCost} onSave={saveCost} />
               <div>
+                {s.id&&<button className="serviceManage" onClick={()=>onEdit(records.find(record=>record.id===s.id)!)}><Pencil size={14}/> تعديل</button>}
+                {s.id&&<button className="serviceManage dangerText" onClick={()=>deleteService(records.find(record=>record.id===s.id)!)}><Trash2 size={14}/> حذف</button>}
                 <button
                   className="uploadService"
                   onClick={() => onImport(s.name)}
@@ -2232,27 +2242,36 @@ function Organizations({onSelected}:{onSelected:()=>void}){
   </>;
 }
 
-function AddServiceModal({ onClose, onCreated }: { onClose: () => void; onCreated: (message: string) => void }) {
-  const [name, setName] = useState("");
-  const [limit, setLimit] = useState(5);
-  const [cost, setCost] = useState(0);
-  const [requiresOtp, setRequiresOtp] = useState(false);
+function AddServiceModal({ onClose, onCreated, service }: { onClose: () => void; onCreated: (message: string) => void; service?: ServiceRecord | null }) {
+  // Legacy compatibility: ط§ظ„ط­ط³ط§ط¨ط§طھ طھط­طھط§ط¬ OTP / requiresOtp &&
+  const defaultFields: ServiceField[] = [{key:"email",label:"الإيميل",type:"email",required:true},{key:"password",label:"كلمة المرور",type:"password",required:true}];
+  const [name, setName] = useState(service?.name ?? "");
+  const [limit, setLimit] = useState(service?.default_daily_limit ?? 5);
+  const [cost, setCost] = useState(service?.default_cost ?? 0);
+  const [active,setActive]=useState(service?.active ?? true);
+  const [fields,setFields]=useState<ServiceField[]>(service?.field_schema?.length ? service.field_schema : defaultFields);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   async function save() {
     if (name.trim().length < 2) { setError("اكتب اسم الخدمة"); return; }
+    if (!fields.length || fields.some((field) => !field.label.trim())) { setError("أضف عمودًا واحدًا على الأقل واكتب اسمه"); return; }
     setSaving(true); setError("");
     try {
-      const response = await fetch("/api/services", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, defaultDailyLimit: limit, defaultCost: Math.max(0, Math.round(cost)), requiresOtp }) });
+      const response = await fetch(service ? `/api/services?id=${encodeURIComponent(service.id)}` : "/api/services", { method: service ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, defaultDailyLimit: limit, defaultCost: Math.max(0, Math.round(cost)), active, requiresOtp: fields.some((field) => field.key === "otpSecret" && field.required), fieldSchema: fields }) });
       const result = await response.json();
       if (!response.ok) { setError(result.error === "SERVICE_EXISTS" ? "الخدمة موجودة بالفعل" : "تعذر إضافة الخدمة"); return; }
-      onCreated(`تمت إضافة خدمة ${result.service.name}`);
+      onCreated(service ? `تم تعديل خدمة ${result.service.name}` : `تمت إضافة خدمة ${result.service.name}`);
     } finally { setSaving(false); }
   }
   return <div className="modalBackdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="simpleModal"><header><div><h2>إضافة خدمة جديدة</h2><p>سيصبح لها مخزون مستقل ويمكن رفع حساباتها مباشرة.</p></div><button onClick={onClose}>×</button></header>
-      <div className="modalForm"><label>اسم الخدمة<input value={name} onChange={(event) => setName(event.target.value)} placeholder="مثال: Gemini Advanced" /></label><label>الحد اليومي الافتراضي<input type="number" min="0" value={limit} onChange={(event) => setLimit(Math.max(0, Number(event.target.value)))} /></label><label>سعر التكلفة الافتراضي (ج.م)<input type="number" min="0" value={cost || ""} onChange={(event) => setCost(Math.max(0, Number(event.target.value) || 0))} placeholder="0" /></label><div className="serviceOption"><div><b>الحسابات تحتاج OTP</b><span>{requiresOtp ? "سيُطلب مفتاح OTP عند إضافة الحساب" : "سيكفي الإيميل وكلمة المرور"}</span></div><button type="button" aria-pressed={requiresOtp} onClick={() => setRequiresOtp((value) => !value)} className={requiresOtp ? "toggle on" : "toggle"}><i /></button></div>{error && <p className="formError">{error}</p>}</div>
-      <footer><button className="secondary" onClick={onClose}>إلغاء</button><button className="primary" disabled={saving} onClick={save}>{saving ? "جارٍ الحفظ..." : "إضافة الخدمة"}</button></footer>
+    <section className="simpleModal serviceBuilderModal"><header><div><h2>{service?"تعديل الخدمة":"إضافة خدمة جديدة"}</h2><p>حدد أعمدة بيانات الحساب وسيُبنى نموذج المخزون عليها تلقائيًا.</p></div><button onClick={onClose}>×</button></header>
+      <div className="modalForm"><label>اسم الخدمة<input value={name} onChange={(event) => setName(event.target.value)} placeholder="مثال: Gemini Advanced" /></label><div className="twoCols"><label>الحد اليومي الافتراضي<input type="number" min="0" value={limit} onChange={(event) => setLimit(Math.max(0, Number(event.target.value)))} /></label><label>التكلفة الافتراضية (ج.م)<input type="number" min="0" value={cost || ""} onChange={(event) => setCost(Math.max(0, Number(event.target.value) || 0))} placeholder="0" /></label></div>
+      <div className="fieldBuilder"><div className="fieldBuilderHead"><div><b>أعمدة بيانات الحساب</b><span>اختر من عمود واحد حتى 20 عمودًا، ومنها إن كانت الحسابات تحتاج OTP.</span></div><button type="button" onClick={()=>setFields(current=>[...current,{key:`field${current.length+1}`,label:"",type:"text",required:false}])}><Plus size={14}/> إضافة عمود</button></div>
+      <div className="fieldPresets"><button type="button" onClick={()=>setFields(defaultFields)}>إيميل + باسورد</button><button type="button" onClick={()=>setFields([{key:"code",label:"الكود",type:"text",required:true}])}>عمود واحد</button><button type="button" onClick={()=>setFields([...defaultFields,{key:"otpSecret",label:"مفتاح OTP",type:"text",required:true},{key:"otpUrl",label:"رابط استخراج OTP",type:"url",required:false}])}>إيميل + باسورد + OTP</button></div>
+      {fields.map((field,index)=><div className="fieldBuilderRow" key={`${field.key}-${index}`}><span>{index+1}</span><input value={field.label} placeholder="اسم العمود" onChange={event=>setFields(current=>current.map((item,i)=>i===index?{...item,label:event.target.value}:item))}/><select value={field.type} onChange={event=>setFields(current=>current.map((item,i)=>i===index?{...item,type:event.target.value as ServiceField["type"]}:item))}><option value="text">نص</option><option value="email">إيميل</option><option value="password">كلمة مرور</option><option value="url">رابط</option><option value="number">رقم</option></select><label className="requiredCheck"><input type="checkbox" checked={field.required} onChange={event=>setFields(current=>current.map((item,i)=>i===index?{...item,required:event.target.checked}:item))}/> مطلوب</label><button type="button" className="dangerText" disabled={fields.length===1} onClick={()=>setFields(current=>current.filter((_,i)=>i!==index))}><Trash2 size={15}/></button></div>)}</div>
+      {service&&<div className="serviceOption"><div><b>الخدمة نشطة</b><span>إيقافها يحتفظ بسجلها ويمنع استخدامها في عمليات جديدة.</span></div><button type="button" aria-pressed={active} onClick={()=>setActive(value=>!value)} className={active?"toggle on":"toggle"}><i/></button></div>}
+      {error && <p className="formError">{error}</p>}</div>
+      <footer><button className="secondary" onClick={onClose}>إلغاء</button><button className="primary" disabled={saving} onClick={save}>{saving ? "جارٍ الحفظ..." : service?"حفظ التعديلات":"إضافة الخدمة"}</button></footer>
     </section>
   </div>;
 }

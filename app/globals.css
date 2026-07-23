@@ -4454,3 +4454,16 @@ tbody tr:hover{background:#fafbfe}.dark thead th{background:#111827}.dark tbody 
   .metrics{grid-template-columns:1fr}.metric{min-height:112px}.panel{padding:17px;border-radius:16px}.tablePanel{padding:0}
   .servicePicker{grid-template-columns:1fr}.saleCalculation{grid-template-columns:1fr 1fr}
 }
+.serviceBuilderModal{width:min(760px,94vw);max-height:90vh;overflow:auto}
+.fieldBuilder{display:grid;gap:12px;padding:16px;border:1px solid var(--line);border-radius:16px;background:var(--surface-soft)}
+.fieldBuilderHead{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.fieldBuilderHead>div{display:grid;gap:4px}.fieldBuilderHead span{color:var(--muted);font-size:12px}
+.fieldBuilderHead button,.fieldPresets button,.serviceManage{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:8px 11px}
+.fieldPresets{display:flex;flex-wrap:wrap;gap:7px}.fieldPresets button{font-size:12px;color:var(--primary)}
+.fieldBuilderRow{display:grid;grid-template-columns:30px minmax(130px,1fr) 120px 85px 36px;align-items:center;gap:8px}
+.fieldBuilderRow>span{display:grid;place-items:center;width:28px;height:28px;border-radius:9px;background:var(--primary-soft);color:var(--primary);font-weight:800}
+.fieldBuilderRow input,.fieldBuilderRow select{width:100%;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:10px}
+.requiredCheck{display:flex!important;align-items:center;gap:6px;white-space:nowrap}.requiredCheck input{width:auto}
+.fieldBuilderRow>button{border:0;background:transparent;display:grid;place-items:center}
+.serviceCard footer>div{flex-wrap:wrap}.serviceManage{font-size:12px}
+@media(max-width:650px){.fieldBuilderRow{grid-template-columns:28px 1fr 36px}.fieldBuilderRow select,.fieldBuilderRow .requiredCheck{grid-column:2}.fieldBuilderHead{align-items:flex-start;flex-direction:column}}
