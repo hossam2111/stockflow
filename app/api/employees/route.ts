@@ -6,21 +6,32 @@ import { z } from "zod";
 
 export async function GET() {
   const context=await requireWorkspacePermission("employees.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
-  const users = await query(`SELECT id,email,name,team,active,daily_limit,can_manage_accounting,access_role,created_at FROM users
-    WHERE role='EMPLOYEE' AND organization_id=$1 ORDER BY created_at ASC`,[context.organizationId]);
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
   const startOfMonth = new Date(startOfDay.getFullYear(), startOfDay.getMonth(), 1);
-  const employees = [];
-  for (const user of users.rows) {
-    const usage = await query(`SELECT COUNT(*) FILTER (WHERE created_at >= $2)::int AS today,
-      COUNT(*) FILTER (WHERE created_at >= $3)::int AS month FROM withdrawals
-      WHERE user_id=$1 AND organization_id=$4 AND status='COMPLETED'`, [user.id,startOfDay,startOfMonth,context.organizationId]);
-    const permissions = await query(`SELECT s.id,s.name,COALESCE(p.enabled,FALSE) AS enabled,
-      COALESCE(p.daily_limit,s.default_daily_limit) AS daily_limit FROM services s
-      LEFT JOIN employee_service_permissions p ON p.service_id=s.id AND p.user_id=$1
-      WHERE s.organization_id=$2 ORDER BY s.created_at`, [user.id,context.organizationId]);
-    employees.push({ ...user, today: usage.rows[0]?.today ?? 0, month: usage.rows[0]?.month ?? 0, permissions: permissions.rows });
+  // Two aggregate queries instead of two per employee (was N+1 — noticeably slow once an org has more
+  // than a handful of employees, since every extra round trip to Postgres adds real network latency).
+  const [users, permissionRows] = await Promise.all([
+    query<{id:string;email:string;name:string;team:string;active:boolean;daily_limit:number;can_manage_accounting:boolean;access_role:string;created_at:string;today:number;month:number}>(
+      `SELECT u.id,u.email,u.name,u.team,u.active,u.daily_limit,u.can_manage_accounting,u.access_role,u.created_at,
+        COUNT(w.id) FILTER (WHERE w.created_at>=$2 AND w.status='COMPLETED')::int AS today,
+        COUNT(w.id) FILTER (WHERE w.created_at>=$3 AND w.status='COMPLETED')::int AS month
+      FROM users u LEFT JOIN withdrawals w ON w.user_id=u.id AND w.organization_id=$1
+      WHERE u.role='EMPLOYEE' AND u.organization_id=$1
+      GROUP BY u.id,u.email,u.name,u.team,u.active,u.daily_limit,u.can_manage_accounting,u.access_role,u.created_at
+      ORDER BY u.created_at ASC, u.id ASC`, [context.organizationId,startOfDay,startOfMonth]),
+    query<{user_id:string;id:string;name:string;enabled:boolean;daily_limit:number}>(
+      `SELECT u.id AS user_id,s.id,s.name,COALESCE(p.enabled,FALSE) AS enabled,COALESCE(p.daily_limit,s.default_daily_limit) AS daily_limit
+      FROM users u CROSS JOIN services s LEFT JOIN employee_service_permissions p ON p.service_id=s.id AND p.user_id=u.id
+      WHERE u.role='EMPLOYEE' AND u.organization_id=$1 AND s.organization_id=$1
+      ORDER BY s.created_at`, [context.organizationId]),
+  ]);
+  const permissionsByUser = new Map<string, { id: string; name: string; enabled: boolean; daily_limit: number }[]>();
+  for (const { user_id, ...permission } of permissionRows.rows) {
+    const list = permissionsByUser.get(user_id) ?? [];
+    list.push(permission);
+    permissionsByUser.set(user_id, list);
   }
+  const employees = users.rows.map((user) => ({ ...user, permissions: permissionsByUser.get(user.id) ?? [] }));
   return NextResponse.json({ employees });
 }
 
