@@ -55,6 +55,9 @@ test("exports Excel-compatible UTF-8 CSV and complete withdrawal/customer data",
     read("app/api/withdrawals/route.ts"),
   ]);
   assert.match(page, /exportToExcel/);
+  assert.match(page, /doc\.save\(`\$\{safeName\}\.pdf`\)/);
+  assert.match(page, /jspdf-autotable/);
+  assert.doesNotMatch(page, /window\.print\(\)/);
   assert.match(page, /customer_notes/);
   assert.match(page, /account_password/);
   assert.match(page, /previous_usage/);
@@ -96,8 +99,23 @@ test("records withdrawals in an editable sales ledger and supports manual sales"
   assert.match(page, /method:editing\?"PATCH":"POST"/);
   assert.match(sales, /requireWorkspaceAdmin/);
   assert.match(sales, /source,service_name,item_description/);
-  assert.match(sales, /WHERE id=\$12 AND organization_id=\$13/);
+  assert.match(sales, /WHERE id=\$11 AND organization_id=\$12/);
+  assert.doesNotMatch(page, /بيان المبيعة/);
   assert.match(withdrawals, /INSERT INTO sales/);
   assert.match(withdrawals, /'WITHDRAWAL'/);
   assert.match(database, /CREATE TABLE IF NOT EXISTS sales/);
+});
+
+test("keeps employees limited and grants accounting access explicitly per organization", async () => {
+  const [page, auth, employees, accounting, expenses] = await Promise.all([
+    read("app/page.tsx"), read("lib/auth.ts"), read("app/api/employees/[id]/route.ts"),
+    read("app/api/accounting/route.ts"), read("app/api/expenses/route.ts"),
+  ]);
+  assert.match(page, /currentUser\?\.canManageAccounting/);
+  assert.match(page, /صلاحية المحاسب/);
+  assert.match(auth, /requireWorkspaceAccounting/);
+  assert.match(auth, /organization_id=\$2/);
+  assert.match(employees, /can_manage_accounting/);
+  assert.match(accounting, /requireWorkspaceAccounting/);
+  assert.match(expenses, /requireWorkspaceAccounting/);
 });

@@ -25,3 +25,12 @@ export async function requireWorkspaceAdmin(){
   if(!context||context.session.role!=="ADMIN"||!context.organizationId)return null;
   return context;
 }
+
+export async function requireWorkspaceAccounting(){
+  const context=await getWorkspaceContext();
+  if(!context?.organizationId)return null;
+  if(context.session.role==="ADMIN")return context;
+  const {query}=await import("@/lib/db");
+  const permission=await query<{can_manage_accounting:boolean;active:boolean}>("SELECT can_manage_accounting,active FROM users WHERE id=$1 AND organization_id=$2 AND role='EMPLOYEE'",[context.session.id,context.organizationId]);
+  return permission.rows[0]?.active&&permission.rows[0]?.can_manage_accounting?context:null;
+}

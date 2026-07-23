@@ -33,6 +33,7 @@ const schema = [
     name TEXT NOT NULL, role TEXT NOT NULL CHECK (role IN ('ADMIN','EMPLOYEE')),
     organization_id TEXT REFERENCES organizations(id), is_super_admin BOOLEAN NOT NULL DEFAULT FALSE,
     team TEXT, active BOOLEAN NOT NULL DEFAULT TRUE, daily_limit INTEGER NOT NULL DEFAULT 20,
+    can_manage_accounting BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   `CREATE TABLE IF NOT EXISTS services (
@@ -171,6 +172,7 @@ export async function ensureDb() {
       // `expenses`) appear on already-seeded databases too — the column migration below can't create
       // whole tables. Only the expensive ~85-query DATA seed is gated by the completion marker.
       for (const statement of schema) await pool.query(statement);
+      await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS can_manage_accounting BOOLEAN NOT NULL DEFAULT FALSE");
       await pool.query(`INSERT INTO sales(id,organization_id,withdrawal_id,created_by,source,service_name,item_description,
         customer_name,customer_phone,quantity,total_amount,cost_amount,paid_amount,status,notes,sold_at,created_at)
         SELECT 'SALE-'||w.id,w.organization_id,w.id,w.user_id,'WITHDRAWAL',s.name,s.name,

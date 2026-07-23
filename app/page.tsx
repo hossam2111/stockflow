@@ -189,7 +189,7 @@ type DashboardStats = {
 
 type EmployeeRecord = {
   id: string; email: string; name: string; initials: string; team: string; today: number; limit: number; month: number;
-  enabled: boolean; color: string; allowed: { id: string; name: string; enabled: boolean; limit: number }[];
+  enabled: boolean; canManageAccounting:boolean; color: string; allowed: { id: string; name: string; enabled: boolean; limit: number }[];
 };
 
 type CurrentUser = {
@@ -202,6 +202,7 @@ type CurrentUser = {
   organizationId?: string | null;
   organizationName?: string;
   isSuperAdmin?: boolean;
+  canManageAccounting?: boolean;
 };
 
 type OrganizationRecord = {
@@ -303,58 +304,38 @@ function exportToExcel(filename: string, title: string, headers: string[], rows:
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-function exportToPdf(title: string, headers: string[], rows: (string | number | boolean | null | undefined)[][]) {
-  const sanitize = (val: unknown) => String(val ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const headerHtml = headers.map((h) => `<th>${sanitize(h)}</th>`).join("");
-  const rowsHtml = rows.map((row) => `<tr>${row.map((cell) => `<td>${sanitize(cell)}</td>`).join("")}</tr>`).join("");
-
-  const printWindow = window.open("", "_blank");
-  if (!printWindow) return;
-
-  printWindow.document.write(`<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="utf-8">
-<title>StockFlow — ${sanitize(title)}</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
-  * { box-sizing: border-box; }
-  body { font-family: 'Cairo', system-ui, -apple-system, sans-serif; direction: rtl; background: #ffffff; color: #0f172a; margin: 0; padding: 25px; }
-  header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #2563eb; padding-bottom: 15px; margin-bottom: 20px; }
-  .brand { font-size: 26px; font-weight: 800; color: #2563eb; letter-spacing: -0.5px; }
-  .brand span { color: #0f172a; }
-  .meta { text-align: left; font-size: 13px; color: #64748b; line-height: 1.5; }
-  h1 { font-size: 20px; font-weight: 700; color: #1e293b; margin: 0 0 15px 0; }
-  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-  th { background-color: #1e293b; color: #ffffff; font-size: 13px; font-weight: 700; padding: 10px 12px; border: 1px solid #cbd5e1; text-align: center; }
-  td { font-size: 12px; padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155; }
-  tr:nth-child(even) { background-color: #f8fafc; }
-  footer { margin-top: 35px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 15px; }
-  @media print {
-    body { padding: 0; }
-    @page { size: A4 landscape; margin: 12mm; }
-  }
-</style>
-</head>
-<body>
-  <header>
-    <div class="brand">Stock<span>Flow</span></div>
-    <div class="meta">تاريخ التتقرير: ${new Date().toLocaleString("ar-EG")}<br>إدارة المخزون بذكاء</div>
-  </header>
-  <h1>${sanitize(title)}</h1>
-  <table>
-    <thead><tr>${headerHtml}</tr></thead>
-    <tbody>${rowsHtml}</tbody>
-  </table>
-  <footer>تقرير مستخرج تلقائيًا من منصة StockFlow</footer>
-  <script>
-    window.onload = function() {
-      setTimeout(function() { window.print(); }, 400);
-    };
-  </script>
-</body>
-</html>`);
-  printWindow.document.close();
+async function exportToPdf(title: string, headers: string[], rows: (string | number | boolean | null | undefined)[][]) {
+  const [{ jsPDF }, { default: autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+  const [regularResponse,boldResponse] = await Promise.all([fetch("/fonts/Amiri-Regular.ttf"),fetch("/fonts/Amiri-Bold.ttf")]);
+  if (!regularResponse.ok||!boldResponse.ok) throw new Error("PDF_FONT_UNAVAILABLE");
+  const toBase64 = async (response:Response) => { const bytes=new Uint8Array(await response.arrayBuffer());let binary="";for(let index=0;index<bytes.length;index+=0x8000)binary+=String.fromCharCode(...bytes.subarray(index,index+0x8000));return btoa(binary); };
+  const doc = new jsPDF({ orientation: headers.length > 5 ? "landscape" : "portrait", unit: "mm", format: "a4" });
+  doc.addFileToVFS("StockFlowArabic-Regular.ttf", await toBase64(regularResponse));
+  doc.addFileToVFS("StockFlowArabic-Bold.ttf", await toBase64(boldResponse));
+  doc.addFont("StockFlowArabic-Regular.ttf", "StockFlowArabic", "normal");
+  doc.addFont("StockFlowArabic-Bold.ttf", "StockFlowArabic", "bold");
+  doc.setFont("StockFlowArabic");
+  const pdfText=(value:unknown)=>doc.processArabic(String(value??""));
+  doc.setFontSize(18);
+  doc.setTextColor(37, 99, 235);
+  doc.text("StockFlow", doc.internal.pageSize.getWidth() - 14, 15, { align: "right" });
+  doc.setFontSize(13);
+  doc.setTextColor(15, 23, 42);
+  doc.text(pdfText(title), doc.internal.pageSize.getWidth() - 14, 24, { align: "right" });
+  doc.setFontSize(8);
+  doc.setTextColor(100, 116, 139);
+  doc.text(pdfText(`تاريخ التصدير: ${new Date().toLocaleString("ar-EG")}`), 14, 15, { align: "left" });
+  autoTable(doc, {
+    startY: 30,
+    head: [headers.map(pdfText)],
+    body: rows.map((row) => row.map(pdfText)),
+    styles: { font: "StockFlowArabic", fontSize: 8, halign: "right", cellPadding: 2.4, overflow: "linebreak" },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255, halign: "right" },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+    margin: { top: 30, right: 10, bottom: 12, left: 10 },
+  });
+  const safeName = title.replace(/[^\u0600-\u06FFa-zA-Z0-9_-]+/g, "-").replace(/^-|-$/g, "") || "stockflow-report";
+  doc.save(`${safeName}.pdf`);
 }
 
 function addMonthsToDate(value: string, months: number) {
@@ -571,7 +552,7 @@ export default function Home() {
             .filter(
               (item) => item.id === "organizations"
                 ? Boolean(currentUser?.isSuperAdmin)
-                : role === "admin" || item.id === "withdraw" || item.id === "activity",
+                : role === "admin" || item.id === "withdraw" || item.id === "activity" || (item.id === "accounting" && Boolean(currentUser?.canManageAccounting)),
             )
             .map((item) => {
               const NavIcon = item.icon;
@@ -755,9 +736,9 @@ export default function Home() {
           )}
           {view === "employees" && <Employees flash={flash} />}
           {view === "reports" && <Reports />}
-          {view === "sales" && <Sales flash={flash} />}
-          {view === "accounting" && <Accounting flash={flash} dataVersion={dataVersion} onChanged={() => setDataVersion((value) => value + 1)} />}
-          {view === "suppliers" && <Suppliers flash={flash} />}
+          {view === "sales" && <Sales flash={flash} services={serviceData} />}
+          {view === "accounting" && (role === "admin" || currentUser?.canManageAccounting) && <Accounting flash={flash} dataVersion={dataVersion} onChanged={() => setDataVersion((value) => value + 1)} />}
+          {view === "suppliers" && <Suppliers flash={flash} services={serviceData} />}
           {view === "activity" &&
             (role === "admin" ? <Activity /> : <EmployeeHistory access={employeeAccess} />)}
           {view === "settings" && (
@@ -2257,7 +2238,7 @@ function Employees({ flash }: { flash: (s: string) => void }) {
   const loadEmployees = useCallback(() => fetch("/api/employees").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => setTeam(data.employees.map((item: Record<string, unknown>, index: number) => ({
     id: String(item.id), email: String(item.email), name: String(item.name), initials: String(item.name).split(" ").map((part) => part[0]).slice(0, 2).join(" "),
     team: String(item.team ?? "بدون فريق"), today: Number(item.today ?? 0), month: Number(item.month ?? 0), limit: Number(item.daily_limit ?? 0),
-    enabled: Boolean(item.active), color: ["#2563eb", "#7c3aed", "#db2777", "#ea580c"][index % 4],
+    enabled: Boolean(item.active), canManageAccounting:Boolean(item.can_manage_accounting), color: ["#2563eb", "#7c3aed", "#db2777", "#ea580c"][index % 4],
     allowed: (item.permissions as Record<string, unknown>[]).map((permission) => ({ id: String(permission.id), name: String(permission.name), enabled: Boolean(permission.enabled), limit: Number(permission.daily_limit ?? 0) })),
   })))).catch(() => flash("تعذر تحميل بيانات الموظفين")), [flash]);
   useEffect(() => { loadEmployees(); }, [loadEmployees]);
@@ -2269,7 +2250,7 @@ function Employees({ flash }: { flash: (s: string) => void }) {
     );
   }
   async function saveEmployee(updated: (typeof team)[number]) {
-    const response=await fetch(`/api/employees/${updated.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({active:updated.enabled,dailyLimit:updated.limit,permissions:updated.allowed.map(p=>({serviceId:p.id,enabled:p.enabled,dailyLimit:p.limit}))})});
+    const response=await fetch(`/api/employees/${updated.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({active:updated.enabled,dailyLimit:updated.limit,canManageAccounting:updated.canManageAccounting,permissions:updated.allowed.map(p=>({serviceId:p.id,enabled:p.enabled,dailyLimit:p.limit}))})});
     if(!response.ok){flash("تعذر حفظ صلاحيات الموظف");return;}
     setTeam((current) => current.map((e, i) => (i === editing ? updated : e)));
     setEditing(null);
@@ -2540,6 +2521,10 @@ function EmployeeEditor({
               <Plus size={15} />
             </button>
           </div>
+        </section>
+        <section className="generalLimit">
+          <div><h3>صلاحية المحاسب</h3><p>تسمح بمراجعة الحسابات، تسجيل المصروفات وتحصيل مديونيات العملاء داخل هذه الشركة فقط.</p></div>
+          <button type="button" className={draft.canManageAccounting?"toggle on":"toggle"} onClick={()=>setDraft({...draft,canManageAccounting:!draft.canManageAccounting})} aria-label="تفعيل صلاحية المحاسب"><i /></button>
         </section>
         <div className="servicePermissions">
           <div className="permissionHead">
@@ -2828,23 +2813,24 @@ function Reports() {
 }
 
 type SaleRow = { id:string; source:string; service_name:string|null; item_description:string; customer_name:string; customer_phone:string|null; quantity:number; total_amount:number; cost_amount:number; paid_amount:number; status:"COMPLETED"|"PENDING"|"CANCELLED"; notes:string|null; sold_at:string; created_by_name:string|null };
-const emptySale = () => ({ customerName:"",customerPhone:"",serviceName:"",itemDescription:"",quantity:1,totalAmount:0,costAmount:0,paidAmount:0,status:"COMPLETED" as SaleRow["status"],notes:"",soldAt:todayInCairo() });
-function Sales({flash}:{flash:(message:string)=>void}){
+const emptySale = () => ({ customerName:"",customerPhone:"",serviceName:"",quantity:1,totalAmount:0,costAmount:0,paidAmount:0,status:"COMPLETED" as SaleRow["status"],notes:"",soldAt:todayInCairo() });
+function Sales({flash,services}:{flash:(message:string)=>void;services:ServiceRecord[]}){
   const [sales,setSales]=useState<SaleRow[]>([]);const [form,setForm]=useState(emptySale);const [editing,setEditing]=useState<string|null>(null);const [version,setVersion]=useState(0);const [saving,setSaving]=useState(false);
   useEffect(()=>{fetch("/api/sales").then(r=>r.ok?r.json():Promise.reject()).then(d=>setSales(d.sales)).catch(()=>setSales([]));},[version]);
   const total=sales.filter(s=>s.status!=="CANCELLED").reduce((n,s)=>n+Number(s.total_amount),0);const paid=sales.filter(s=>s.status!=="CANCELLED").reduce((n,s)=>n+Number(s.paid_amount),0);const profit=sales.filter(s=>s.status!=="CANCELLED").reduce((n,s)=>n+Number(s.total_amount)-Number(s.cost_amount),0);
-  async function save(){if(!form.customerName.trim()||!form.itemDescription.trim()){flash("اكتب اسم العميل وبيان المبيعة");return;}setSaving(true);const response=await fetch(`/api/sales${editing?`?id=${encodeURIComponent(editing)}`:""}`,{method:editing?"PATCH":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(form)});setSaving(false);if(!response.ok){flash("تعذر حفظ المبيعة");return;}setForm(emptySale());setEditing(null);setVersion(v=>v+1);flash(editing?"تم تعديل المبيعة":"تم تسجيل المبيعة");}
-  function edit(s:SaleRow){setEditing(s.id);setForm({customerName:s.customer_name,customerPhone:s.customer_phone??"",serviceName:s.service_name??"",itemDescription:s.item_description,quantity:Number(s.quantity),totalAmount:Number(s.total_amount),costAmount:Number(s.cost_amount),paidAmount:Number(s.paid_amount),status:s.status,notes:s.notes??"",soldAt:String(s.sold_at).slice(0,10)});window.scrollTo({top:0,behavior:"smooth"});}
+  async function save(){if(!form.customerName.trim()||!form.serviceName.trim()){flash("اختر الخدمة واكتب اسم العميل");return;}setSaving(true);const response=await fetch(`/api/sales${editing?`?id=${encodeURIComponent(editing)}`:""}`,{method:editing?"PATCH":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(form)});setSaving(false);if(!response.ok){flash("تعذر حفظ المبيعة");return;}setForm(emptySale());setEditing(null);setVersion(v=>v+1);flash(editing?"تم تعديل المبيعة":"تم تسجيل المبيعة");}
+  function edit(s:SaleRow){setEditing(s.id);setForm({customerName:s.customer_name,customerPhone:s.customer_phone??"",serviceName:s.service_name??s.item_description,quantity:Number(s.quantity),totalAmount:Number(s.total_amount),costAmount:Number(s.cost_amount),paidAmount:Number(s.paid_amount),status:s.status,notes:s.notes??"",soldAt:String(s.sold_at).slice(0,10)});window.scrollTo({top:0,behavior:"smooth"});}
+  function selectService(serviceName:string){const service=services.find(item=>item.name===serviceName);setForm(current=>({...current,serviceName,costAmount:service?Number(service.default_cost)*current.quantity:current.costAmount}));}
   async function remove(id:string){if(!window.confirm("حذف هذه المبيعة؟"))return;const r=await fetch(`/api/sales?id=${encodeURIComponent(id)}`,{method:"DELETE"});if(r.ok){setVersion(v=>v+1);flash("تم حذف المبيعة");}}
   return <>
     <PageHead title="المبيعات" subtitle="سجل موحد للمبيعات التلقائية من السحب والمبيعات اليدوية." />
     <div className="metrics compact"><Metric icon={ShoppingCart} label="إجمالي المبيعات" value={`${total.toLocaleString("ar-EG")} ج.م`} change={`${sales.length} عملية`} note="يدوي وتلقائي" tone="blue"/><Metric icon={Wallet} label="المحصّل" value={`${paid.toLocaleString("ar-EG")} ج.م`} change={`${Math.max(0,total-paid).toLocaleString("ar-EG")} متبقي`} note="النقدية المحصلة" tone="green"/><Metric icon={TrendingUp} label="مجمل الربح" value={`${profit.toLocaleString("ar-EG")} ج.م`} change="قبل المصروفات" note="البيع − التكلفة" tone="purple"/></div>
     <section className="panel salesEditor"><div className="panelHead"><div><h3>{editing?"تعديل المبيعة":"تسجيل مبيعة يدوية"}</h3><p>لا يشترط سحب حساب لتسجيل البيع.</p></div></div><div className="salesForm">
-      <label>العميل<input value={form.customerName} onChange={e=>setForm({...form,customerName:e.target.value})}/></label><label>الهاتف<input dir="ltr" value={form.customerPhone} onChange={e=>setForm({...form,customerPhone:e.target.value})}/></label><label>الخدمة / التصنيف<input value={form.serviceName} onChange={e=>setForm({...form,serviceName:e.target.value})}/></label><label>بيان المبيعة<input value={form.itemDescription} onChange={e=>setForm({...form,itemDescription:e.target.value})}/></label>
-      <label>الكمية<input type="number" min={1} value={form.quantity} onChange={e=>setForm({...form,quantity:Math.max(1,Number(e.target.value)||1)})}/></label><label>الإجمالي<input type="number" min={0} value={form.totalAmount||""} onChange={e=>setForm({...form,totalAmount:Math.max(0,Number(e.target.value)||0)})}/></label><label>التكلفة<input type="number" min={0} value={form.costAmount||""} onChange={e=>setForm({...form,costAmount:Math.max(0,Number(e.target.value)||0)})}/></label><label>المدفوع<input type="number" min={0} max={form.totalAmount} value={form.paidAmount||""} onChange={e=>setForm({...form,paidAmount:Math.min(form.totalAmount,Math.max(0,Number(e.target.value)||0))})}/></label>
+      <label>العميل<input value={form.customerName} onChange={e=>setForm({...form,customerName:e.target.value})}/></label><label>الهاتف<input dir="ltr" value={form.customerPhone} onChange={e=>setForm({...form,customerPhone:e.target.value})}/></label><label>الخدمة<select value={form.serviceName} onChange={e=>selectService(e.target.value)}><option value="">اختر الخدمة</option>{services.filter(service=>service.active).map(service=><option key={service.id} value={service.name}>{service.name}</option>)}</select></label>
+      <label>الكمية<input type="number" min={1} value={form.quantity} onChange={e=>{const quantity=Math.max(1,Number(e.target.value)||1);const service=services.find(item=>item.name===form.serviceName);setForm({...form,quantity,costAmount:service?Number(service.default_cost)*quantity:form.costAmount});}}/></label><label>الإجمالي<input type="number" min={0} value={form.totalAmount||""} onChange={e=>setForm({...form,totalAmount:Math.max(0,Number(e.target.value)||0)})}/></label><label>التكلفة<input type="number" min={0} value={form.costAmount||""} onChange={e=>setForm({...form,costAmount:Math.max(0,Number(e.target.value)||0)})}/></label><label>المدفوع<input type="number" min={0} max={form.totalAmount} value={form.paidAmount||""} onChange={e=>setForm({...form,paidAmount:Math.min(form.totalAmount,Math.max(0,Number(e.target.value)||0))})}/></label>
       <label>التاريخ<input type="date" value={form.soldAt} onChange={e=>setForm({...form,soldAt:e.target.value})}/></label><label>الحالة<select value={form.status} onChange={e=>setForm({...form,status:e.target.value as typeof form.status})}><option value="COMPLETED">مكتملة</option><option value="PENDING">معلقة</option><option value="CANCELLED">ملغاة</option></select></label><label className="wide">ملاحظات<input value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></label>
     </div><footer>{editing&&<button className="secondary" onClick={()=>{setEditing(null);setForm(emptySale());}}>إلغاء التعديل</button>}<button className="primary" disabled={saving} onClick={save}>{saving?"جارٍ الحفظ...":editing?"حفظ التعديل":"تسجيل المبيعة"}</button></footer></section>
-    <section className="panel tablePanel"><div className="panelHead"><h3>سجل المبيعات</h3><div style={{ display: "flex", gap: "0.5rem" }}><button className="link" onClick={()=>exportToExcel("stockflow-sales.xls", "سجل المبيعات والتسويات", ["الرقم","المصدر","العميل","الهاتف","البيان","الكمية","الإجمالي","التكلفة","المدفوع","الحالة","التاريخ"], sales.map(s=>[s.id,s.source,s.customer_name,s.customer_phone,s.item_description,s.quantity,s.total_amount,s.cost_amount,s.paid_amount,s.status,s.sold_at]))}><Download size={14}/> Excel</button><button className="link" onClick={()=>exportToPdf("سجل المبيعات والتسويات", ["التاريخ","المصدر","العميل","الهاتف","البيان","الإجمالي","المدفوع","المتبقي","الحالة"], sales.map(s=>[formatArabicDate(s.sold_at), s.source==="WITHDRAWAL"?"سحب":"يدوي", s.customer_name, s.customer_phone??"—", s.item_description, Number(s.total_amount), Number(s.paid_amount), Math.max(0,Number(s.total_amount)-Number(s.paid_amount)), s.status]))}><FileText size={14}/> PDF</button><button className="link" onClick={()=>downloadCsv("stockflow-sales.csv",[["الرقم","المصدر","العميل","الهاتف","البيان","الكمية","الإجمالي","التكلفة","المدفوع","الحالة","التاريخ"],...sales.map(s=>[s.id,s.source,s.customer_name,s.customer_phone,s.item_description,s.quantity,s.total_amount,s.cost_amount,s.paid_amount,s.status,s.sold_at])])}><Download size={14}/> CSV</button></div></div><div className="tableWrap"><table><thead><tr><th>التاريخ</th><th>المصدر</th><th>العميل</th><th>البيان</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th/></tr></thead><tbody>{sales.map(s=><tr key={s.id}><td>{formatArabicDate(s.sold_at)}</td><td><span className="status">{s.source==="WITHDRAWAL"?"سحب":"يدوي"}</span></td><td><b>{s.customer_name}</b><small className="tableSubtext">{s.customer_phone}</small></td><td>{s.item_description}</td><td><b>{Number(s.total_amount).toLocaleString("ar-EG")}</b></td><td>{Number(s.paid_amount).toLocaleString("ar-EG")}</td><td>{Math.max(0,Number(s.total_amount)-Number(s.paid_amount)).toLocaleString("ar-EG")}</td><td>{s.status}</td><td><div className="rowActions"><button className="dots" onClick={()=>edit(s)}><Pencil size={13}/></button><button className="dots danger" onClick={()=>remove(s.id)}><Trash2 size={13}/></button></div></td></tr>)}</tbody></table></div></section>
+    <section className="panel tablePanel"><div className="panelHead"><h3>سجل المبيعات</h3><div style={{ display: "flex", gap: "0.5rem" }}><button className="link" onClick={()=>exportToExcel("stockflow-sales.xls", "سجل المبيعات والتسويات", ["الرقم","المصدر","العميل","الهاتف","الخدمة","الكمية","الإجمالي","التكلفة","المدفوع","الحالة","التاريخ"], sales.map(s=>[s.id,s.source,s.customer_name,s.customer_phone,s.service_name??s.item_description,s.quantity,s.total_amount,s.cost_amount,s.paid_amount,s.status,s.sold_at]))}><Download size={14}/> Excel</button><button className="link" onClick={()=>exportToPdf("سجل المبيعات والتسويات", ["التاريخ","المصدر","العميل","الهاتف","الخدمة","الإجمالي","المدفوع","المتبقي","الحالة"], sales.map(s=>[formatArabicDate(s.sold_at), s.source==="WITHDRAWAL"?"سحب":"يدوي", s.customer_name, s.customer_phone??"—", s.service_name??s.item_description, Number(s.total_amount), Number(s.paid_amount), Math.max(0,Number(s.total_amount)-Number(s.paid_amount)), s.status]))}><FileText size={14}/> PDF</button><button className="link" onClick={()=>downloadCsv("stockflow-sales.csv",[["الرقم","المصدر","العميل","الهاتف","الخدمة","الكمية","الإجمالي","التكلفة","المدفوع","الحالة","التاريخ"],...sales.map(s=>[s.id,s.source,s.customer_name,s.customer_phone,s.service_name??s.item_description,s.quantity,s.total_amount,s.cost_amount,s.paid_amount,s.status,s.sold_at])])}><Download size={14}/> CSV</button></div></div><div className="tableWrap"><table><thead><tr><th>التاريخ</th><th>المصدر</th><th>العميل</th><th>الخدمة</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th/></tr></thead><tbody>{sales.map(s=><tr key={s.id}><td>{formatArabicDate(s.sold_at)}</td><td><span className="status">{s.source==="WITHDRAWAL"?"سحب":"يدوي"}</span></td><td><b>{s.customer_name}</b><small className="tableSubtext">{s.customer_phone}</small></td><td>{s.service_name??s.item_description}</td><td><b>{Number(s.total_amount).toLocaleString("ar-EG")}</b></td><td>{Number(s.paid_amount).toLocaleString("ar-EG")}</td><td>{Math.max(0,Number(s.total_amount)-Number(s.paid_amount)).toLocaleString("ar-EG")}</td><td>{s.status}</td><td><div className="rowActions"><button className="dots" onClick={()=>edit(s)}><Pencil size={13}/></button><button className="dots danger" onClick={()=>remove(s.id)}><Trash2 size={13}/></button></div></td></tr>)}</tbody></table></div></section>
   </>;
 }
 
@@ -2990,7 +2976,7 @@ type SupplierRow = { id: string; name: string; phone: string | null; notes: stri
 type PurchaseRow = { id: string; supplier_id: string; supplier: string; item: string; quantity: number; unit_cost: number; total: number; paid: number; remaining: number; purchased_at: string; notes: string | null };
 type WageRow = { id: string; name: string; role: string | null; amount: number; paid_at: string; notes: string | null };
 
-function Suppliers({ flash }: { flash: (s: string) => void }) {
+function Suppliers({ flash, services }: { flash: (s: string) => void; services:ServiceRecord[] }) {
   const [tab, setTab] = useState<"suppliers" | "wages">("suppliers");
   const [version, setVersion] = useState(0);
   const [suppliers, setSuppliers] = useState<SupplierRow[]>([]);
@@ -3050,7 +3036,7 @@ function Suppliers({ flash }: { flash: (s: string) => void }) {
               <div className="panelHead"><h3>تسجيل عملية شراء</h3></div>
               <div className="expenseForm" style={{ gridTemplateColumns: "1fr 1fr" }}>
                 <label>المورد<select value={purchaseForm.supplierId} onChange={(e) => setPurchaseForm({ ...purchaseForm, supplierId: e.target.value })}><option value="">اختر المورد</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
-                <label>الصنف<input value={purchaseForm.item} onChange={(e) => setPurchaseForm({ ...purchaseForm, item: e.target.value })} placeholder="مثال: حسابات جيميني" /></label>
+                <label>الخدمة / الصنف<select value={purchaseForm.item} onChange={(e) => {const service=services.find(item=>item.name===e.target.value);setPurchaseForm({ ...purchaseForm, item:e.target.value, unitCost:service?Number(service.default_cost):purchaseForm.unitCost });}}><option value="">اختر من الخدمات</option>{services.filter(service=>service.active).map(service=><option key={service.id} value={service.name}>{service.name}</option>)}</select></label>
                 <label>الكمية<input type="number" min={1} value={purchaseForm.quantity} onChange={(e) => setPurchaseForm({ ...purchaseForm, quantity: Math.max(1, Number(e.target.value) || 1) })} /></label>
                 <label>سعر الوحدة (ج.م)<input type="number" min={0} value={purchaseForm.unitCost || ""} onChange={(e) => setPurchaseForm({ ...purchaseForm, unitCost: Math.max(0, Number(e.target.value) || 0) })} placeholder="0" /></label>
                 <label>حالة الدفع<select value={purchaseForm.paidInFull ? "FULL" : "PARTIAL"} onChange={(e) => setPurchaseForm({ ...purchaseForm, paidInFull: e.target.value === "FULL" })}><option value="FULL">مدفوع بالكامل</option><option value="PARTIAL">آجل / جزئي</option></select></label>

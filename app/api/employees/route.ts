@@ -6,7 +6,7 @@ import { z } from "zod";
 
 export async function GET() {
   const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
-  const users = await query(`SELECT id,email,name,team,active,daily_limit,created_at FROM users
+  const users = await query(`SELECT id,email,name,team,active,daily_limit,can_manage_accounting,created_at FROM users
     WHERE role='EMPLOYEE' AND organization_id=$1 ORDER BY created_at ASC`,[context.organizationId]);
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
   const startOfMonth = new Date(startOfDay.getFullYear(), startOfDay.getMonth(), 1);

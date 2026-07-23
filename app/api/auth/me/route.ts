@@ -6,7 +6,7 @@ export async function GET() {
   const context = await getWorkspaceContext();
   if (!context) return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
   const {session,organizationId}=context;
-  const result = await query<{ active: boolean; team: string }>("SELECT active,team FROM users WHERE id=$1", [session.id]);
+  const result = await query<{ active: boolean; team: string; can_manage_accounting:boolean }>("SELECT active,team,can_manage_accounting FROM users WHERE id=$1", [session.id]);
   const organization=organizationId?await query<{id:string;name:string}>("SELECT id,name FROM organizations WHERE id=$1",[organizationId]):null;
   return NextResponse.json({
     user: {
@@ -19,6 +19,7 @@ export async function GET() {
       organizationId,
       organizationName: organization?.rows[0]?.name ?? "إدارة المنصة",
       isSuperAdmin: session.isSuperAdmin,
+      canManageAccounting: result.rows[0]?.can_manage_accounting ?? false,
     },
   });
 }
