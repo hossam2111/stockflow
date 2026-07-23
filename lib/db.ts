@@ -168,7 +168,7 @@ function createPool() {
   }
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   memory.public.registerFunction({ name: "current_database", implementation: () => "stockflow" });
-  memory.public.registerFunction({ name: "nullif", implementation: (a: unknown, b: unknown) => (a === b ? null : a) });
+  memory.public.registerFunction({ name: "nullif", implementation: (a: string | null, b: string | null) => (a === b ? null : a) });
   const adapter = memory.adapters.createPg();
   globalThis.stockflowMemory = true;
   return new adapter.Pool() as unknown as Pool;
