@@ -154,7 +154,7 @@ test("keeps login off the full schema audit and always releases loading state",a
 test("makes OTP a per-service choice and enforces it only when enabled",async()=>{
   const [page,services,inventory,database]=await Promise.all([read("app/page.tsx"),read("app/api/services/route.ts"),read("app/api/inventory/route.ts"),read("lib/db.ts")]);
   assert.match(page,/الحسابات تحتاج OTP/);
-  assert.match(page,/requiresOtp &&/);
+  assert.match(page,/field\.key === "otpSecret" && field\.required/);
   assert.match(services,/requiresOtp: z\.boolean\(\)\.default\(false\)/);
   assert.match(inventory,/OTP_REQUIRED/);
   assert.match(database,/requires_otp BOOLEAN NOT NULL DEFAULT FALSE/);

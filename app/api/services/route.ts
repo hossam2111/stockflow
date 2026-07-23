@@ -101,6 +101,10 @@ export async function DELETE(request: Request) {
   if(!service.rows[0])return NextResponse.json({error:"NOT_FOUND"},{status:404});
   const history=await query("SELECT 1 FROM withdrawals WHERE service_id=$1 AND organization_id=$2 LIMIT 1",[id,context.organizationId]);
   if(history.rows[0])return NextResponse.json({error:"SERVICE_HAS_HISTORY"},{status:409});
+  // Manual sales (source='MANUAL') aren't linked to a withdrawal row, so they're only reachable by the
+  // service's name (sales.service_name is a denormalized snapshot, not a foreign key).
+  const manualSales=await query("SELECT 1 FROM sales WHERE organization_id=$1 AND service_name=$2 LIMIT 1",[context.organizationId,service.rows[0].name]);
+  if(manualSales.rows[0])return NextResponse.json({error:"SERVICE_HAS_HISTORY"},{status:409});
   await query("DELETE FROM inventory_items WHERE service_id=$1 AND organization_id=$2",[id,context.organizationId]);
   await query("DELETE FROM employee_service_permissions WHERE service_id=$1",[id]).catch(()=>undefined);
   await query("DELETE FROM services WHERE id=$1 AND organization_id=$2",[id,context.organizationId]);
