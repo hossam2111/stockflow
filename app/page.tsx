@@ -374,6 +374,8 @@ export default function Home() {
   const [sidebar, setSidebar] = useState(false);
   const [notice, setNotice] = useState("");
   const [query, setQuery] = useState("");
+  const [searchOpen,setSearchOpen]=useState(false);
+  const globalSearchRef=useRef<HTMLDivElement>(null);
   const [selectedService, setSelectedService] = useState(services[0]);
   const [dark, setDark] = useState(false);
   const [withdrawn, setWithdrawn] = useState(false);
@@ -389,6 +391,14 @@ export default function Home() {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [allowedServiceIds, setAllowedServiceIds] = useState<string[]>([]);
   const [employeeAccess, setEmployeeAccess] = useState<EmployeeAccessStats | null>(null);
+
+  useEffect(()=>{
+    const closeOnOutside=(event:PointerEvent)=>{if(searchOpen&&!globalSearchRef.current?.contains(event.target as Node))setSearchOpen(false);};
+    const closeOnEscape=(event:KeyboardEvent)=>{if(event.key==="Escape")setSearchOpen(false);};
+    document.addEventListener("pointerdown",closeOnOutside);
+    document.addEventListener("keydown",closeOnEscape);
+    return()=>{document.removeEventListener("pointerdown",closeOnOutside);document.removeEventListener("keydown",closeOnEscape);};
+  },[searchOpen]);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -602,17 +612,18 @@ export default function Home() {
           <button className="menu iconButton" aria-label="فتح القائمة" onClick={() => setSidebar(!sidebar)}>
             <Menu size={19} />
           </button>
-          <div className="globalSearch">
+          <div className="globalSearch" ref={globalSearchRef}>
             <div className="search">
               <Search size={17} strokeWidth={1.8} />
               <input
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {setQuery(e.target.value);setSearchOpen(Boolean(e.target.value));}}
+                onFocus={()=>{if(query)setSearchOpen(true);}}
                 placeholder="ابحث بالإيميل، رقم الحساب، الخدمة..."
               />
               <kbd>⌘ K</kbd>
             </div>
-            {query && (
+            {query && searchOpen && (
               <div className="searchResults">
                 <div className="searchResultHead">
                   <b>نتائج البحث</b>
@@ -625,6 +636,7 @@ export default function Home() {
                       onClick={() => {
                         setView("inventory");
                         setQuery(r.account);
+                        setSearchOpen(false);
                       }}
                     >
                       <span className="resultIcon">@</span>
@@ -647,7 +659,7 @@ export default function Home() {
                 )}
                 <button
                   className="allResults"
-                  onClick={() => setView("inventory")}
+                  onClick={() => {setView("inventory");setSearchOpen(false);}}
                 >
                   عرض كل نتائج المخزون <ArrowLeft size={13} />
                 </button>

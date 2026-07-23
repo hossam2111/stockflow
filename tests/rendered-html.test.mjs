@@ -133,3 +133,11 @@ test("persists organization settings and applies allocation policy server-side",
   assert.match(database,/CREATE TABLE IF NOT EXISTS user_permissions/);
   assert.match(database,/CREATE TABLE IF NOT EXISTS organization_settings/);
 });
+
+test("closes global search results on outside click and Escape",async()=>{
+  const page=await read("app/page.tsx");
+  assert.match(page,/globalSearchRef\.current\?\.contains/);
+  assert.match(page,/document\.addEventListener\("pointerdown",closeOnOutside\)/);
+  assert.match(page,/event\.key==="Escape"/);
+  assert.match(page,/query && searchOpen/);
+});
