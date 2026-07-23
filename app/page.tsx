@@ -83,6 +83,7 @@ const services = [
   { name: "Google Gemini", code: "Gm", color: "#4285F4", stock: 0, used: 0, total: 0, type: "فردي", price: 300 },
   { name: "ChatGPT Plus", code: "GPT", color: "#111827", stock: 0, used: 0, total: 0, type: "مشترك", price: 450 },
   { name: "CapCut Pro", code: "Cp", color: "#0EA5E9", stock: 0, used: 0, total: 0, type: "مشترك", price: 200 },
+  { name: "Pro Apps", code: "PA", color: "#6366f1", stock: 0, used: 0, total: 0, type: "مشترك", price: 400 },
   { name: "Grok", code: "Gk", color: "#4B5563", stock: 0, used: 0, total: 0, type: "فردي", price: 350 },
   { name: "Canva Pro", code: "Ca", color: "#8b5cf6", stock: 0, used: 0, total: 0, type: "مشترك", price: 180 },
   { name: "Claude Pro", code: "Cl", color: "#d97706", stock: 0, used: 0, total: 0, type: "فردي", price: 500 },
@@ -221,7 +222,7 @@ type EmployeeAccessStats = {
 
 const serviceIds: Record<string, string> = {
   "Google Gemini": "google", "ChatGPT Plus": "chatgpt", "CapCut Pro": "capcut", Grok: "grok",
-  "Canva Pro": "canva", "Claude Pro": "claude", Perplexity: "perplexity", Midjourney: "midjourney",
+  "Pro Apps": "proapps", "Canva Pro": "canva", "Claude Pro": "claude", Perplexity: "perplexity", Midjourney: "midjourney",
   "Adobe CC": "adobe", "Spotify Premium": "spotify", "Netflix Premium": "netflix",
   "YouTube Premium": "youtube", "Disney+": "disney", "Shahid VIP": "shahid",
   "Duolingo Super": "duolingo", "GitHub Copilot": "github", "Microsoft 365": "microsoft365",

@@ -15,11 +15,12 @@ globalThis.stockflowReady = undefined;
 // here (and bumping CATALOGUE_MARKER) makes it apply to EVERY organization on the next startup.
 export const serviceCatalogue: [string, number][] = [
   ["Google Gemini", 5], ["ChatGPT Plus", 10], ["CapCut Pro", 5], ["Grok", 4],
-  ["Canva Pro", 4], ["Claude Pro", 4], ["Perplexity", 4], ["Midjourney", 3],
+  ["Pro Apps", 5], ["Canva Pro", 4], ["Claude Pro", 4], ["Perplexity", 4], ["Midjourney", 3],
   ["Adobe CC", 5], ["Spotify Premium", 10], ["Netflix Premium", 8], ["YouTube Premium", 8],
   ["Disney+", 6], ["Shahid VIP", 6], ["Duolingo Super", 5], ["GitHub Copilot", 12], ["Microsoft 365", 6],
 ];
-const CATALOGUE_MARKER = "services-catalogue-v1";
+const CATALOGUE_MARKER = "services-catalogue-v2";
+const PRO_APPS_SEED_MARKER = "pro-apps-dummy-stock-v1";
 
 const schema = [
   `CREATE TABLE IF NOT EXISTS organizations (
@@ -167,6 +168,7 @@ function createPool() {
   }
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   memory.public.registerFunction({ name: "current_database", implementation: () => "stockflow" });
+  memory.public.registerFunction({ name: "nullif", implementation: (a: unknown, b: unknown) => (a === b ? null : a) });
   const adapter = memory.adapters.createPg();
   globalThis.stockflowMemory = true;
   return new adapter.Pool() as unknown as Pool;
@@ -307,6 +309,38 @@ export async function ensureDb() {
         }
       }
       await pool.query("INSERT INTO activity_logs(id,action,metadata) VALUES ($1,'CATALOGUE_SYNC','{}') ON CONFLICT DO NOTHING", [CATALOGUE_MARKER]);
+
+      // Seed Pro Apps dummy inventory items across all organizations
+      const proAppsCheck = await pool.query("SELECT 1 FROM activity_logs WHERE id=$1 LIMIT 1", [PRO_APPS_SEED_MARKER]);
+      if (proAppsCheck.rows.length === 0) {
+        const orgList = await pool.query<{ id: string }>("SELECT id FROM organizations");
+        for (const org of orgList.rows) {
+          const svcRes = await pool.query<{ id: string }>(
+            "SELECT id FROM services WHERE organization_id=$1 AND name IN ('Pro Apps', 'Adobe CC') ORDER BY CASE WHEN name='Pro Apps' THEN 1 ELSE 2 END LIMIT 1",
+            [org.id]
+          );
+          if (svcRes.rows.length > 0) {
+            const svcId = svcRes.rows[0].id;
+            const dummyItems = [
+              ["proapps.vip1@stockflow.app", "ProAppPass#2026", "JBSWY3DPEHPK3PXP", "https://2fa.live/tok/JBSWY3DPEHPK3PXP", "SHARED", 5],
+              ["proapps.vip2@stockflow.app", "ProAppPass#2026", "JBSWY3DPEHPK3PXP", "https://2fa.live/tok/JBSWY3DPEHPK3PXP", "SHARED", 5],
+              ["proapps.single1@stockflow.app", "ProAppPass#2026", "JBSWY3DPEHPK3PXP", "https://2fa.live/tok/JBSWY3DPEHPK3PXP", "INDIVIDUAL", 1],
+              ["proapps.single2@stockflow.app", "ProAppPass#2026", "JBSWY3DPEHPK3PXP", "https://2fa.live/tok/JBSWY3DPEHPK3PXP", "INDIVIDUAL", 1],
+              ["proapps.team@stockflow.app", "ProAppPass#2026", "JBSWY3DPEHPK3PXP", "https://2fa.live/tok/JBSWY3DPEHPK3PXP", "SHARED", 10],
+            ];
+            for (let i = 0; i < dummyItems.length; i++) {
+              const [email, pwd, otpSecret, otpUrl, type, maxUsage] = dummyItems[i];
+              await pool.query(
+                `INSERT INTO inventory_items (id, organization_id, service_id, account_email, account_password, otp_secret, otp_url, account_type, max_usage, current_usage, status, expiry_date)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, 'AVAILABLE', '2026-12-31')
+                 ON CONFLICT DO NOTHING`,
+                [`INV-PA-${org.id.slice(0, 8)}-${i + 1}`, org.id, svcId, email, pwd, otpSecret, otpUrl, type, maxUsage]
+              );
+            }
+          }
+        }
+        await pool.query("INSERT INTO activity_logs(id,action,metadata) VALUES ($1,'PRO_APPS_SEED','{}') ON CONFLICT DO NOTHING", [PRO_APPS_SEED_MARKER]);
+      }
     })();
   }
   try {
