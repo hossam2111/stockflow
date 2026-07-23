@@ -128,6 +128,10 @@ const schema = [
     notes TEXT, sold_at DATE NOT NULL DEFAULT CURRENT_DATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
+  `CREATE TABLE IF NOT EXISTS login_attempts (
+    id BIGSERIAL PRIMARY KEY, email TEXT NOT NULL, success BOOLEAN NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS login_attempts_email_created_idx ON login_attempts(email, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS sales_org_sold_idx ON sales(organization_id,sold_at DESC)`,
   `CREATE INDEX IF NOT EXISTS ai_connections_org_idx ON ai_connections(organization_id)`,
   `CREATE INDEX IF NOT EXISTS withdrawals_user_created_idx ON withdrawals(user_id, created_at)`,
@@ -282,7 +286,7 @@ export async function ensureDb() {
   if (!globalThis.stockflowMigrationReady) {
     globalThis.stockflowMigrationReady = (async () => {
       const pool = getPool();
-      for (const [table, definitions] of Object.entries({ ...tenantColumns, services: [...tenantColumns.services, "default_cost INTEGER NOT NULL DEFAULT 0", "requires_otp BOOLEAN NOT NULL DEFAULT FALSE"], inventory_items: [...tenantColumns.inventory_items, "expiry_date DATE"], withdrawals: withdrawalColumns })) {
+      for (const [table, definitions] of Object.entries({ ...tenantColumns, services: [...tenantColumns.services, "default_cost INTEGER NOT NULL DEFAULT 0", "requires_otp BOOLEAN NOT NULL DEFAULT FALSE"], inventory_items: [...tenantColumns.inventory_items, "expiry_date DATE"], withdrawals: withdrawalColumns, sales: ["customer_type TEXT NOT NULL DEFAULT 'NEW'"] })) {
         const existing = await pool.query<{ column_name: string }>(
           "SELECT column_name FROM information_schema.columns WHERE table_name=$1", [table],
         );
