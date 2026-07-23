@@ -141,3 +141,12 @@ test("closes global search results on outside click and Escape",async()=>{
   assert.match(page,/event\.key==="Escape"/);
   assert.match(page,/query && searchOpen/);
 });
+
+test("keeps login off the full schema audit and always releases loading state",async()=>{
+  const [page,login,database]=await Promise.all([read("app/page.tsx"),read("app/api/auth/login/route.ts"),read("lib/db.ts")]);
+  assert.match(login,/directQuery/);
+  assert.match(login,/42P01/);
+  assert.match(database,/export function directQuery/);
+  assert.match(page,/AbortSignal\.timeout\(15000\)/);
+  assert.match(page,/finally\{setLoading\(false\);\}/);
+});

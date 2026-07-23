@@ -376,6 +376,12 @@ export async function query<T extends QueryResultRow = QueryResultRow>(text: str
   return getPool().query<T>(text, values);
 }
 
+// Authentication runs on every fresh visit and must not wait for the full idempotent schema audit.
+// The login route falls back to ensureDb only when a brand-new database has not been bootstrapped yet.
+export function directQuery<T extends QueryResultRow = QueryResultRow>(text:string,values:unknown[]=[]){
+  return getPool().query<T>(text,values);
+}
+
 export async function transaction<T>(work: (client: PoolClient) => Promise<T>) {
   await ensureDb();
   const client = await getPool().connect();

@@ -784,15 +784,18 @@ function Login({ onLogin }: { onLogin: (user: CurrentUser) => void }) {
   const [loginError,setLoginError]=useState("");
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setLoading(true);
+    setLoading(true);setLoginError("");
     const email = (
       e.currentTarget.querySelector('input[type="email"]') as HTMLInputElement
     ).value.toLowerCase();
     const password=(e.currentTarget.querySelector('input[type="password"],input[data-password]') as HTMLInputElement).value;
-    const response=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password})});
-    const result=await response.json();setLoading(false);
-    if(!response.ok){setLoginError("البريد الإلكتروني أو كلمة المرور غير صحيحة");return;}
-    onLogin(result.user as CurrentUser);
+    try{
+      const response=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password}),signal:AbortSignal.timeout(15000)});
+      const result=await response.json();
+      if(!response.ok){setLoginError("البريد الإلكتروني أو كلمة المرور غير صحيحة");return;}
+      onLogin(result.user as CurrentUser);
+    }catch{setLoginError("الاتصال استغرق وقتًا طويلًا — حاول مرة أخرى");}
+    finally{setLoading(false);}
   }
   return (
     <main className="login" dir="rtl">
