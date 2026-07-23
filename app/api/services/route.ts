@@ -4,13 +4,7 @@ import { getWorkspaceContext, requireWorkspacePermission } from "@/lib/auth";
 import { z } from "zod";
 import { legacyServiceFields, serviceFieldsSchema } from "@/lib/service-fields";
 
-async function ensureFlexibleFields() {
-  await query(`ALTER TABLE services ADD COLUMN IF NOT EXISTS field_schema JSONB NOT NULL DEFAULT
-    '[{"key":"email","label":"الإيميل","type":"email","required":true},{"key":"password","label":"كلمة المرور","type":"password","required":true},{"key":"otpSecret","label":"مفتاح OTP","type":"text","required":false},{"key":"otpUrl","label":"رابط استخراج OTP","type":"url","required":false}]'::jsonb`);
-}
-
 export async function GET() {
-  await ensureFlexibleFields();
   const context=await getWorkspaceContext();if(!context?.organizationId)return NextResponse.json({error:"NO_WORKSPACE"},{status:403});
   const result = await query(`SELECT s.id,s.name,s.active,s.default_daily_limit,s.default_cost,s.requires_otp,s.field_schema,
     COUNT(i.id)::int AS total,
@@ -35,7 +29,6 @@ const createSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  await ensureFlexibleFields();
   const context=await requireWorkspacePermission("services.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const parsed = createSchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ error: "INVALID_INPUT", details: parsed.error.flatten() }, { status: 400 });
@@ -75,7 +68,6 @@ const updateSchema = z.object({
 });
 
 export async function PATCH(request: Request) {
-  await ensureFlexibleFields();
   const context=await requireWorkspacePermission("services.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const id = new URL(request.url).searchParams.get("id");
   if (!id) return NextResponse.json({ error: "INVALID_INPUT" }, { status: 400 });
@@ -102,7 +94,6 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  await ensureFlexibleFields();
   const context=await requireWorkspacePermission("services.manage");if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
   const id=new URL(request.url).searchParams.get("id");
   if(!id)return NextResponse.json({error:"INVALID_INPUT"},{status:400});

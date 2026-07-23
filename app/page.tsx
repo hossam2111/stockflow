@@ -118,6 +118,8 @@ type InventoryRow = {
   added: string;
   otpReady: boolean;
   expiryDate: string | null;
+  customData: Record<string, string>;
+  fieldSchema: ServiceField[];
 };
 
 type ServiceRecord = {
@@ -151,6 +153,8 @@ type WithdrawalCredentials = {
   password: string;
   otpSecret: string | null;
   otpUrl: string | null;
+  fields?: Record<string, string>;
+  fieldSchema?: ServiceField[];
   accountType: "INDIVIDUAL" | "SHARED";
   allocatedUses: number;
   previousUsage: number;
@@ -493,6 +497,8 @@ export default function Home() {
           rawStatus: String(item.status), status: item.status === "AVAILABLE" ? "متاح" : item.status === "FULL" ? "ممتلئ" : item.status === "DISABLED" ? "معطل" : String(item.status),
           added: new Date(String(item.created_at)).toLocaleString("ar-EG"), otpReady: Boolean(item.otp_ready),
           expiryDate: item.expiry_date ? String(item.expiry_date).slice(0, 10) : null,
+          customData: (item.custom_data && typeof item.custom_data === "object") ? item.custom_data as Record<string,string> : {},
+          fieldSchema: Array.isArray(item.field_schema) ? item.field_schema as ServiceField[] : [],
         })));
       }).catch(() => {});
     }
@@ -1242,7 +1248,22 @@ function Withdraw({
   const previewEndDate = addMonthsToDate(details.subscriptionStartDate, details.subscriptionMonths);
   const previewWarrantyEnd = details.warrantyDays ? addDaysToDate(details.subscriptionStartDate, details.warrantyDays) : null;
   const totalAllocatedUses = accounts.reduce((total, item) => total + item.allocatedUses, 0);
-  const customerAccountLines = accounts.map((item, index) => `${accounts.length > 1 ? `الحساب ${index + 1}\n` : ""}📧 الإيميل: ${item.email}\n🔑 كلمة المرور: ${item.password}${item.otpSecret ? `\n🔐 مفتاح OTP: ${item.otpSecret}` : ""}${item.otpUrl ? `\n🌐 رابط استخراج OTP: ${item.otpUrl}` : ""}`).join("\n\n");
+  function fieldEmoji(key: string, type: ServiceField["type"]) {
+    if (key === "email") return "📧"; if (key === "password") return "🔑";
+    if (key === "otpSecret") return "🔐"; if (key === "otpUrl") return "🌐";
+    if (type === "url") return "🌐"; if (type === "number") return "🔢"; return "📋";
+  }
+  const customerAccountLines = accounts.map((item, index) => {
+    const prefix = accounts.length > 1 ? `الحساب ${index + 1}\n` : "";
+    if (item.fieldSchema?.length && item.fields) {
+      const lines = item.fieldSchema
+        .filter((field) => String(item.fields?.[field.key] ?? "").trim())
+        .map((field) => `${fieldEmoji(field.key, field.type)} ${field.label}: ${item.fields![field.key]}`);
+      return `${prefix}${lines.join("\n")}`;
+    }
+    // Fallback for accounts the server didn't (or couldn't) resolve field data for.
+    return `${prefix}📧 الإيميل: ${item.email}\n🔑 كلمة المرور: ${item.password}${item.otpSecret ? `\n🔐 مفتاح OTP: ${item.otpSecret}` : ""}${item.otpUrl ? `\n🌐 رابط استخراج OTP: ${item.otpUrl}` : ""}`;
+  }).join("\n\n");
   const internalAccountLines = accounts.map((item, index) => `${item.accountType === "SHARED" ? "حساب مشترك" : "حساب فردي"} ${index + 1} — ${item.inventoryId}\n${item.email}\nالاستخدام: ${item.newUsage} من ${item.maxUsage} — المتبقي: ${item.remainingUsage}`).join("\n\n");
   const priceLine = account.sellingPrice ? `\n💵 سعر البيع: ${account.sellingPrice} ج.م` : "";
   const deliveryMessage = `أهلًا ${account.customerName || "بك"} 👋\nبيانات اشتراك ${selected.name}:\n\n${customerAccountLines}\n\n📅 بداية الاشتراك: ${formatArabicDate(account.subscriptionStartDate)}\n⏳ مدة الاشتراك: ${account.subscriptionMonths} ${account.subscriptionMonths === 1 ? "شهر" : "شهور"}\n🏁 تاريخ الانتهاء: ${formatArabicDate(account.subscriptionEndDate)}\n🛡️ الضمان: ${account.warrantyDays ? `${account.warrantyDays} يوم — حتى ${formatArabicDate(account.warrantyEndDate)}` : "بدون ضمان"}${priceLine}\n\n⚠️ برجاء عدم تغيير بيانات الحساب.\nشكرًا لاختيارك لنا 💙`;
@@ -1657,17 +1678,27 @@ function Inventory({
     }
   }
   const [editing, setEditing] = useState<InventoryRow | null>(null);
-  const [editForm, setEditForm] = useState({ password: "", otpSecret: "", otpUrl: "", maxUsage: 1, accountType: "INDIVIDUAL" as "INDIVIDUAL" | "SHARED", expiryDate: "" });
+  const legacyEditFields: ServiceField[] = [
+    { key: "email", label: "الإيميل", type: "email", required: true },
+    { key: "password", label: "كلمة المرور", type: "password", required: true },
+    { key: "otpSecret", label: "مفتاح OTP", type: "text", required: false },
+    { key: "otpUrl", label: "رابط استخراج OTP", type: "url", required: false },
+  ];
+  const [editForm, setEditForm] = useState({ fields: {} as Record<string, string>, maxUsage: 1, accountType: "INDIVIDUAL" as "INDIVIDUAL" | "SHARED", expiryDate: "" });
   const [savingEdit, setSavingEdit] = useState(false);
   function openEdit(row: InventoryRow) {
-    setEditForm({ password: row.password, otpSecret: row.otpKey, otpUrl: row.otpUrl, maxUsage: row.maxUsage, accountType: row.accountType, expiryDate: row.expiryDate ?? "" });
+    const schema = row.fieldSchema.length ? row.fieldSchema : legacyEditFields;
+    const legacyByKey: Record<string, string> = { email: row.account, password: row.password, otpSecret: row.otpKey, otpUrl: row.otpUrl };
+    const fields: Record<string, string> = {};
+    for (const field of schema) fields[field.key] = String(row.customData[field.key] ?? legacyByKey[field.key] ?? "");
+    setEditForm({ fields, maxUsage: row.maxUsage, accountType: row.accountType, expiryDate: row.expiryDate ?? "" });
     setEditing(row);
   }
   async function saveEdit() {
     if (!editing || savingEdit) return;
     setSavingEdit(true);
     try {
-      const patch: Record<string, unknown> = { password: editForm.password, accountType: editForm.accountType, expiryDate: editForm.expiryDate || null, otpSecret: editForm.otpSecret || null, otpUrl: editForm.otpUrl || null };
+      const patch: Record<string, unknown> = { accountType: editForm.accountType, expiryDate: editForm.expiryDate || null, fields: editForm.fields };
       if (editForm.accountType === "SHARED") patch.maxUsage = editForm.maxUsage;
       const ok = await onUpdate(editing.id, patch);
       if (ok) { flash("تم حفظ التعديل"); setEditing(null); }
@@ -1825,10 +1856,16 @@ function Inventory({
           <section className="accountModal">
             <header><div><h2>{selected.service}</h2><p>{selected.id}</p></div><button onClick={() => setSelected(null)}>×</button></header>
             <div className="credentials">
-              <Credential label="الإيميل" value={selected.account} />
-              <Credential label="كلمة المرور" value={selected.password} />
-              <Credential label="مفتاح OTP" value={selected.otpKey || "غير متوفر"} />
-              <Credential label="موقع استخراج OTP" value={selected.otpUrl || "غير متوفر"} link={Boolean(selected.otpUrl)} />
+              {(selected.fieldSchema.length ? selected.fieldSchema : [
+                { key: "email", label: "الإيميل", type: "email" as const, required: true },
+                { key: "password", label: "كلمة المرور", type: "password" as const, required: true },
+                { key: "otpSecret", label: "مفتاح OTP", type: "text" as const, required: false },
+                { key: "otpUrl", label: "رابط استخراج OTP", type: "url" as const, required: false },
+              ]).map((field) => {
+                const legacyByKey: Record<string, string> = { email: selected.account, password: selected.password, otpSecret: selected.otpKey, otpUrl: selected.otpUrl };
+                const value = String(selected.customData[field.key] ?? legacyByKey[field.key] ?? "").trim();
+                return <Credential key={field.key} label={field.label} value={value || "غير متوفر"} link={field.type === "url" && Boolean(value)} />;
+              })}
             </div>
             {selected.otpKey && <div className="otpLiveRow"><LiveOtp secret={selected.otpKey} /></div>}
             <footer><button className="danger" disabled={deletingId === selected.id} onClick={() => handleDelete(selected, true)}><Trash2 size={14} /> حذف من المخزون</button><button className="primary" onClick={() => setSelected(null)}>تم</button></footer>
@@ -1840,12 +1877,16 @@ function Inventory({
           <section className="accountModal">
             <header><div><h2>تعديل الحساب</h2><p>{editing.id} — {editing.account}</p></div><button onClick={() => setEditing(null)}>×</button></header>
             <div className="editForm">
-              <label className="editField wide">الإيميل (لا يمكن تعديله)
-                <input value={editing.account} readOnly disabled dir="ltr" />
-              </label>
-              <label className="editField wide">كلمة المرور
-                <input value={editForm.password} onChange={(event) => setEditForm({ ...editForm, password: event.target.value })} dir="ltr" />
-              </label>
+              {(editing.fieldSchema.length ? editing.fieldSchema : legacyEditFields).map((field) => (
+                <label className="editField wide" key={field.key}>{field.label}{field.required ? " *" : " (اختياري)"}
+                  <input
+                    type={field.type === "password" ? "text" : field.type === "number" ? "number" : "text"}
+                    value={editForm.fields[field.key] ?? ""}
+                    onChange={(event) => setEditForm({ ...editForm, fields: { ...editForm.fields, [field.key]: event.target.value } })}
+                    dir="ltr"
+                  />
+                </label>
+              ))}
               <label className="editField">نوع الحساب
                 <select value={editForm.accountType} onChange={(event) => setEditForm({ ...editForm, accountType: event.target.value as "INDIVIDUAL" | "SHARED" })}>
                   <option value="INDIVIDUAL">فردي</option><option value="SHARED">مشترك</option>
@@ -1865,12 +1906,6 @@ function Inventory({
                   <input type="date" value={editForm.expiryDate} onChange={(event) => setEditForm({ ...editForm, expiryDate: event.target.value })} />
                 </label>
               )}
-              <label className="editField">مفتاح OTP (اختياري)
-                <input value={editForm.otpSecret} onChange={(event) => setEditForm({ ...editForm, otpSecret: event.target.value })} dir="ltr" placeholder="JBSWY3DPEHPK3PXP" />
-              </label>
-              <label className="editField wide">رابط استخراج OTP (اختياري)
-                <input value={editForm.otpUrl} onChange={(event) => setEditForm({ ...editForm, otpUrl: event.target.value })} dir="ltr" placeholder="https://2fa.live" />
-              </label>
             </div>
             <footer><button onClick={() => setEditing(null)}>إلغاء</button><button className="primary" disabled={savingEdit} onClick={saveEdit}>حفظ التعديل</button></footer>
           </section>

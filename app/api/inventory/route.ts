@@ -4,12 +4,6 @@ import { z } from "zod";
 import { requireWorkspacePermission } from "@/lib/auth";
 import { normalizeServiceFields, type ServiceField } from "@/lib/service-fields";
 
-async function ensureFlexibleFields() {
-  await query(`ALTER TABLE services ADD COLUMN IF NOT EXISTS field_schema JSONB NOT NULL DEFAULT
-    '[{"key":"email","label":"الإيميل","type":"email","required":true},{"key":"password","label":"كلمة المرور","type":"password","required":true},{"key":"otpSecret","label":"مفتاح OTP","type":"text","required":false},{"key":"otpUrl","label":"رابط استخراج OTP","type":"url","required":false}]'::jsonb`);
-  await query("ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS custom_data JSONB NOT NULL DEFAULT '{}'::jsonb");
-}
-
 const itemSchema = z.object({
   serviceId: z.string().min(1), email: z.string().email().optional(), password: z.string().optional(),
   otpSecret: z.string().optional().nullable(), otpUrl: z.string().url().optional().nullable(),
@@ -18,7 +12,6 @@ const itemSchema = z.object({
 });
 
 export async function GET(request: Request) {
-  await ensureFlexibleFields();
   const context=await requireWorkspacePermission("inventory.view");if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
   const url = new URL(request.url); const serviceId = url.searchParams.get("serviceId"); const search = url.searchParams.get("search") || "";
   const values: unknown[] = [context.organizationId];
@@ -41,7 +34,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  await ensureFlexibleFields();
   const context=await requireWorkspacePermission("inventory.manage");if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
   const body = await request.json(); const rows = z.array(itemSchema).min(1).max(10000).safeParse(body.items);
   if (!rows.success) return NextResponse.json({ error:"INVALID_ITEMS", details:rows.error.flatten() }, { status:400 });
@@ -96,6 +88,7 @@ const patchSchema = z.object({
   password: z.string().min(1).optional(), otpSecret: z.string().optional().nullable(), otpUrl: z.string().url().optional().nullable(),
   maxUsage: z.number().int().min(1).max(100).optional(), accountType: z.enum(["INDIVIDUAL","SHARED"]).optional(),
   status: z.enum(["AVAILABLE","DISABLED"]).optional(), expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  fields: z.record(z.string(), z.union([z.string(),z.number()])).optional(),
 });
 
 export async function PATCH(request: Request) {
@@ -118,7 +111,7 @@ export async function PATCH(request: Request) {
       else if(data.status==="AVAILABLE")newStatus=row.current_usage>=effectiveMax?"FULL":"AVAILABLE";
       else if(data.maxUsage!==undefined&&row.status!=="DISABLED")newStatus=row.current_usage>=effectiveMax?"FULL":"AVAILABLE";
       const sets:string[]=[];const vals:unknown[]=[];const changed:Record<string,unknown>={};
-      const push=(col:string,val:unknown)=>{vals.push(val);sets.push(`${col}=$${vals.length}`);};
+      const push=(col:string,val:unknown,cast?:string)=>{vals.push(val);sets.push(`${col}=$${vals.length}${cast??""}`);};
       if(data.password!==undefined){push("password",data.password);changed.password=true;}
       if(data.otpSecret!==undefined){push("otp_secret",data.otpSecret);changed.otpSecret=data.otpSecret;}
       if(data.otpUrl!==undefined){push("otp_url",data.otpUrl);changed.otpUrl=data.otpUrl;}
@@ -126,6 +119,16 @@ export async function PATCH(request: Request) {
       if(data.maxUsage!==undefined||data.accountType!==undefined){push("max_usage",effectiveMax);changed.maxUsage=effectiveMax;}
       if(data.expiryDate!==undefined){push("expiry_date",data.expiryDate);changed.expiryDate=data.expiryDate;}
       if(data.status!==undefined||(data.maxUsage!==undefined&&row.status!=="DISABLED")){push("status",newStatus);changed.status=newStatus;}
+      if(data.fields!==undefined){
+        // Custom per-service field values. Keep the legacy email/password/otp columns in sync when the
+        // service's schema still uses those keys, so allocation/export/search that read them directly
+        // (and the UNIQUE(service_id,email) constraint) stay consistent with what was just edited.
+        push("custom_data",JSON.stringify(data.fields),"::jsonb");changed.fields=data.fields;
+        if(typeof data.fields.email==="string"&&data.fields.email.trim())push("email",data.fields.email.trim());
+        if(typeof data.fields.password==="string"&&data.fields.password.trim())push("password",data.fields.password.trim());
+        if("otpSecret" in data.fields)push("otp_secret",String(data.fields.otpSecret||"")||null);
+        if("otpUrl" in data.fields)push("otp_url",String(data.fields.otpUrl||"")||null);
+      }
       vals.push(id);const idIdx=vals.length;vals.push(context.organizationId);const orgIdx=vals.length;
       const updated=await client.query(`UPDATE inventory_items SET ${sets.join(",")} WHERE id=$${idIdx} AND organization_id=$${orgIdx} RETURNING *`,vals);
       await client.query(`INSERT INTO activity_logs(id,organization_id,actor_id,action,entity_type,entity_id,metadata)

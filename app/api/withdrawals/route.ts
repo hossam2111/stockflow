@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isMemoryDatabase, transaction } from "@/lib/db";
 import { z } from "zod";
 import { getWorkspaceContext, requireWorkspaceAdmin, requireWorkspacePermission } from "@/lib/auth";
+import { normalizeServiceFields, type ServiceField } from "@/lib/service-fields";
 
 const schema = z.object({
   employeeId:z.string().default("omar"),
@@ -75,8 +76,9 @@ export async function POST(request: Request) {
       }
       // Accounting snapshot: cost comes from the service's default cost at sale time; paid amount
       // defaults to the full selling price (i.e. paid in full) unless the caller records a partial payment.
-      const serviceRow=await client.query<{default_cost:number;name:string}>("SELECT default_cost,name FROM services WHERE id=$1 AND organization_id=$2",[parsed.data.serviceId,context.organizationId]);
+      const serviceRow=await client.query<{default_cost:number;name:string;field_schema:unknown}>("SELECT default_cost,name,field_schema FROM services WHERE id=$1 AND organization_id=$2",[parsed.data.serviceId,context.organizationId]);
       const unitCost=serviceRow.rows[0]?.default_cost ?? 0;
+      const fieldSchema=normalizeServiceFields(serviceRow.rows[0]?.field_schema);
       const unitPaid=parsed.data.paidAmount ?? parsed.data.sellingPrice;
       const lock=isMemoryDatabase()?"":"FOR UPDATE SKIP LOCKED";
       const settingsResult=await client.query<{allocation_strategy:string;allow_shared_accounts:boolean}>("SELECT allocation_strategy,allow_shared_accounts FROM organization_settings WHERE organization_id=$1",[context.organizationId]);
@@ -87,6 +89,7 @@ export async function POST(request: Request) {
       const withdrawalIds:string[]=[];
       const credentialMap=new Map<string,{
         inventoryId:string;email:string;password:string;otpSecret:string|null;otpUrl:string|null;
+        fields:Record<string,string>;fieldSchema:ServiceField[];
         accountType:"INDIVIDUAL"|"SHARED";allocatedUses:number;previousUsage:number;newUsage:number;
         maxUsage:number;remainingUsage:number;status:string;
         customerName:string;customerPhone:string;customerContact:string;customerReference:string;customerNotes:string;
@@ -128,8 +131,16 @@ export async function POST(request: Request) {
           existingCredential.remainingUsage=Math.max(0,updatedItem.max_usage-updatedItem.current_usage);
           existingCredential.status=updatedItem.status;
         }else{
+          // Resolve display fields from the flexible custom_data JSONB, falling back to the legacy
+          // email/password/otp columns for items created before per-service field schemas existed
+          // (those rows have an empty custom_data, so this keeps their delivery message intact).
+          const legacyFallback:Record<string,string>={email:item.email??"",password:item.password??"",otpSecret:item.otp_secret??"",otpUrl:item.otp_url??""};
+          const customData=(item.custom_data&&typeof item.custom_data==="object")?item.custom_data as Record<string,unknown>:{};
+          const resolvedFields:Record<string,string>={...legacyFallback};
+          for(const [key,value] of Object.entries(customData))if(value!==undefined&&value!==null&&String(value).trim()!=="")resolvedFields[key]=String(value);
           credentialMap.set(item.id,{
             inventoryId:item.id,email:item.email,password:item.password,otpSecret:item.otp_secret,otpUrl:item.otp_url,
+            fields:resolvedFields,fieldSchema,
             accountType:item.account_type,allocatedUses:1,previousUsage:item.current_usage,newUsage:updatedItem.current_usage,
             maxUsage:item.max_usage,remainingUsage:Math.max(0,updatedItem.max_usage-updatedItem.current_usage),status:updatedItem.status,
             customerName:parsed.data.customerName,customerPhone:parsed.data.customerPhone,customerContact:parsed.data.customerContact,

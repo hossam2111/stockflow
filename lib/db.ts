@@ -21,6 +21,16 @@ const CATALOGUE_MARKER = "services-catalogue-v2";
 const PRO_APPS_SEED_MARKER_V2 = "pro-apps-demo-stock-v2";
 const SALES_BACKFILL_MARKER = "sales-ledger-backfill-v1";
 
+// Default per-service field layout (legacy email/password/OTP shape), used both as the JSONB column
+// default for pre-existing services and as the fallback client code renders when a service hasn't
+// customized its fields.
+const DEFAULT_FIELD_SCHEMA_JSON = JSON.stringify([
+  { key: "email", label: "الإيميل", type: "email", required: true },
+  { key: "password", label: "كلمة المرور", type: "password", required: true },
+  { key: "otpSecret", label: "مفتاح OTP", type: "text", required: false },
+  { key: "otpUrl", label: "رابط استخراج OTP", type: "url", required: false },
+]).replaceAll("'", "''");
+
 const schema = [
   `CREATE TABLE IF NOT EXISTS organizations (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT UNIQUE NOT NULL,
@@ -286,7 +296,10 @@ export async function ensureDb() {
   if (!globalThis.stockflowMigrationReady) {
     globalThis.stockflowMigrationReady = (async () => {
       const pool = getPool();
-      for (const [table, definitions] of Object.entries({ ...tenantColumns, services: [...tenantColumns.services, "default_cost INTEGER NOT NULL DEFAULT 0", "requires_otp BOOLEAN NOT NULL DEFAULT FALSE"], inventory_items: [...tenantColumns.inventory_items, "expiry_date DATE"], withdrawals: withdrawalColumns, sales: ["customer_type TEXT NOT NULL DEFAULT 'NEW'"] })) {
+      for (const [table, definitions] of Object.entries({ ...tenantColumns,
+        services: [...tenantColumns.services, "default_cost INTEGER NOT NULL DEFAULT 0", "requires_otp BOOLEAN NOT NULL DEFAULT FALSE", `field_schema JSONB NOT NULL DEFAULT '${DEFAULT_FIELD_SCHEMA_JSON}'::jsonb`],
+        inventory_items: [...tenantColumns.inventory_items, "expiry_date DATE", "custom_data JSONB NOT NULL DEFAULT '{}'::jsonb"],
+        withdrawals: withdrawalColumns, sales: ["customer_type TEXT NOT NULL DEFAULT 'NEW'"] })) {
         const existing = await pool.query<{ column_name: string }>(
           "SELECT column_name FROM information_schema.columns WHERE table_name=$1", [table],
         );
