@@ -1524,6 +1524,18 @@ button.danger:disabled,
 .toggle.on i {
   transform: translateX(-17px);
 }
+.serviceOption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft, #f8fafc);
+}
+.serviceOption b, .serviceOption span { display: block; }
+.serviceOption span { margin-top: 4px; color: var(--muted); font-size: 12px; }
 .settingsForm footer {
   display: flex;
   justify-content: flex-end;

@@ -20,7 +20,6 @@ export const serviceCatalogue: [string, number][] = [
   ["Disney+", 6], ["Shahid VIP", 6], ["Duolingo Super", 5], ["GitHub Copilot", 12], ["Microsoft 365", 6],
 ];
 const CATALOGUE_MARKER = "services-catalogue-v2";
-const PRO_APPS_SEED_MARKER = "pro-apps-dummy-stock-v1";
 const PRO_APPS_SEED_MARKER_V2 = "pro-apps-demo-stock-v2";
 
 const schema = [
@@ -43,6 +42,7 @@ const schema = [
     id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id), name TEXT NOT NULL,
     active BOOLEAN NOT NULL DEFAULT TRUE, default_daily_limit INTEGER NOT NULL DEFAULT 10,
     default_cost INTEGER NOT NULL DEFAULT 0,
+    requires_otp BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(organization_id,name)
   )`,
   `CREATE TABLE IF NOT EXISTS employee_service_permissions (
@@ -275,7 +275,7 @@ export async function ensureDb() {
   if (!globalThis.stockflowMigrationReady) {
     globalThis.stockflowMigrationReady = (async () => {
       const pool = getPool();
-      for (const [table, definitions] of Object.entries({ ...tenantColumns, services: [...tenantColumns.services, "default_cost INTEGER NOT NULL DEFAULT 0"], inventory_items: [...tenantColumns.inventory_items, "expiry_date DATE"], withdrawals: withdrawalColumns })) {
+      for (const [table, definitions] of Object.entries({ ...tenantColumns, services: [...tenantColumns.services, "default_cost INTEGER NOT NULL DEFAULT 0", "requires_otp BOOLEAN NOT NULL DEFAULT FALSE"], inventory_items: [...tenantColumns.inventory_items, "expiry_date DATE"], withdrawals: withdrawalColumns })) {
         const existing = await pool.query<{ column_name: string }>(
           "SELECT column_name FROM information_schema.columns WHERE table_name=$1", [table],
         );
@@ -310,38 +310,6 @@ export async function ensureDb() {
         }
       }
       await pool.query("INSERT INTO activity_logs(id,action,metadata) VALUES ($1,'CATALOGUE_SYNC','{}') ON CONFLICT DO NOTHING", [CATALOGUE_MARKER]);
-
-      // Seed Pro Apps dummy inventory items across all organizations
-      const proAppsCheck = await pool.query("SELECT 1 FROM activity_logs WHERE id=$1 LIMIT 1", [PRO_APPS_SEED_MARKER]);
-      if (proAppsCheck.rows.length === 0) {
-        const orgList = await pool.query<{ id: string }>("SELECT id FROM organizations");
-        for (const org of orgList.rows) {
-          const svcRes = await pool.query<{ id: string }>(
-            "SELECT id FROM services WHERE organization_id=$1 AND name IN ('Pro Apps', 'Adobe CC') ORDER BY CASE WHEN name='Pro Apps' THEN 1 ELSE 2 END LIMIT 1",
-            [org.id]
-          );
-          if (svcRes.rows.length > 0) {
-            const svcId = svcRes.rows[0].id;
-            const dummyItems = [
-              ["proapps.vip1@stockflow.app", "ProAppPass#2026", "JBSWY3DPEHPK3PXP", "https://2fa.live/tok/JBSWY3DPEHPK3PXP", "SHARED", 5],
-              ["proapps.vip2@stockflow.app", "ProAppPass#2026", "JBSWY3DPEHPK3PXP", "https://2fa.live/tok/JBSWY3DPEHPK3PXP", "SHARED", 5],
-              ["proapps.single1@stockflow.app", "ProAppPass#2026", "JBSWY3DPEHPK3PXP", "https://2fa.live/tok/JBSWY3DPEHPK3PXP", "INDIVIDUAL", 1],
-              ["proapps.single2@stockflow.app", "ProAppPass#2026", "JBSWY3DPEHPK3PXP", "https://2fa.live/tok/JBSWY3DPEHPK3PXP", "INDIVIDUAL", 1],
-              ["proapps.team@stockflow.app", "ProAppPass#2026", "JBSWY3DPEHPK3PXP", "https://2fa.live/tok/JBSWY3DPEHPK3PXP", "SHARED", 10],
-            ];
-            for (let i = 0; i < dummyItems.length; i++) {
-              const [email, pwd, otpSecret, otpUrl, type, maxUsage] = dummyItems[i];
-              await pool.query(
-                `INSERT INTO inventory_items (id, organization_id, service_id, account_email, account_password, otp_secret, otp_url, account_type, max_usage, current_usage, status, expiry_date)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, 'AVAILABLE', '2026-12-31')
-                 ON CONFLICT DO NOTHING`,
-                [`INV-PA-${org.id.slice(0, 8)}-${i + 1}`, org.id, svcId, email, pwd, otpSecret, otpUrl, type, maxUsage]
-              );
-            }
-          }
-        }
-        await pool.query("INSERT INTO activity_logs(id,action,metadata) VALUES ($1,'PRO_APPS_SEED','{}') ON CONFLICT DO NOTHING", [PRO_APPS_SEED_MARKER]);
-      }
     })();
   }
   try {

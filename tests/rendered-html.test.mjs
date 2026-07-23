@@ -85,7 +85,7 @@ test("isolates every admin inventory operation to their own organization", async
   assert.match(inventory, /requireWorkspacePermission\("inventory\.view"\)/);
   assert.match(inventory, /requireWorkspacePermission\("inventory\.manage"\)/);
   assert.match(inventory, /i\.organization_id=\$1/);
-  assert.match(inventory, /SELECT id FROM services WHERE id=\$1 AND organization_id=\$2/);
+  assert.match(inventory, /SELECT id,requires_otp FROM services WHERE id=\$1 AND organization_id=\$2/);
   assert.match(inventory, /WHERE id=\$1 AND organization_id=\$2 FOR UPDATE/);
   assert.match(inventory, /DELETE FROM inventory_items WHERE id=\$1 AND organization_id=\$2/);
   assert.match(inventory, /context\.organizationId,item\.serviceId,item\.email/);
@@ -149,4 +149,13 @@ test("keeps login off the full schema audit and always releases loading state",a
   assert.match(database,/export function directQuery/);
   assert.match(page,/AbortSignal\.timeout\(15000\)/);
   assert.match(page,/finally\{setLoading\(false\);\}/);
+});
+
+test("makes OTP a per-service choice and enforces it only when enabled",async()=>{
+  const [page,services,inventory,database]=await Promise.all([read("app/page.tsx"),read("app/api/services/route.ts"),read("app/api/inventory/route.ts"),read("lib/db.ts")]);
+  assert.match(page,/الحسابات تحتاج OTP/);
+  assert.match(page,/requiresOtp &&/);
+  assert.match(services,/requiresOtp: z\.boolean\(\)\.default\(false\)/);
+  assert.match(inventory,/OTP_REQUIRED/);
+  assert.match(database,/requires_otp BOOLEAN NOT NULL DEFAULT FALSE/);
 });

@@ -126,6 +126,7 @@ type ServiceRecord = {
   active: boolean;
   default_daily_limit: number;
   default_cost: number;
+  requires_otp: boolean;
   total: number;
   available: number;
   available_slots: number;
@@ -1871,10 +1872,12 @@ function ImportModal({
   const [fileName, setFileName] = useState("");
   const [fileError, setFileError] = useState("");
   const [single, setSingle] = useState({ email: "", password: "", otpSecret: "", otpUrl: "" });
+  const selectedService = serviceRecords.find((service) => service.name === serviceName);
+  const requiresOtp = Boolean(selectedService?.requires_otp);
   const fileRef = useRef<HTMLInputElement>(null);
   const sourceRows = tab === "single" ? (single.email || single.password ? [`${single.email} | ${single.password} | ${single.otpSecret} | ${single.otpUrl}`] : []) : rows.trim().split(/\r?\n/).filter(Boolean);
   const parsedRows = sourceRows.map((line) => line.split("|").map((value) => value.trim()));
-  const validRows = parsedRows.filter(([email, password, , otpUrl]) => /^\S+@\S+\.\S+$/.test(email || "") && Boolean(password) && (!otpUrl || /^https?:\/\//i.test(otpUrl)));
+  const validRows = parsedRows.filter(([email, password, otpSecret, otpUrl]) => /^\S+@\S+\.\S+$/.test(email || "") && Boolean(password) && (!requiresOtp || Boolean(otpSecret)) && (!otpUrl || /^https?:\/\//i.test(otpUrl)));
   const count = validRows.length;
   const invalidCount = parsedRows.length - validRows.length;
 
@@ -1919,7 +1922,7 @@ function ImportModal({
     try {
       const response=await fetch("/api/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items})});
       const result=await response.json();
-      if(!response.ok){flash(result.error === "INVALID_ITEMS" ? "بيانات بعض الحسابات غير صحيحة" : "تعذر حفظ الحسابات");return;}
+      if(!response.ok){flash(result.error === "OTP_REQUIRED" ? "هذه الخدمة تتطلب مفتاح OTP لكل حساب" : result.error === "INVALID_ITEMS" ? "بيانات بعض الحسابات غير صحيحة" : "تعذر حفظ الحسابات");return;}
       flash(`تمت إضافة ${result.inserted} حساب وتخطي ${result.duplicates} مكرر`);
       onImported();
     } finally { setSaving(false); }
@@ -1977,17 +1980,7 @@ function ImportModal({
             <em>مطلوب</em>
           </div>
           <i>←</i>
-          <div>
-            <span>3</span>
-            <b>مفتاح OTP</b>
-            <em>اختياري</em>
-          </div>
-          <i>←</i>
-          <div>
-            <span>4</span>
-            <b>رابط OTP</b>
-            <em>اختياري</em>
-          </div>
+          {requiresOtp && <><div><span>3</span><b>مفتاح OTP</b><em>مطلوب</em></div><i>←</i><div><span>4</span><b>رابط OTP</b><em>اختياري</em></div></>}
         </div>
         <div className="importTabs">
           <button className={tab === "single" ? "active" : ""} onClick={() => setTab("single")}>إضافة حساب واحد</button>
@@ -2008,8 +2001,7 @@ function ImportModal({
           <div className="singleAccountForm">
             <label>الإيميل *<input type="email" value={single.email} onChange={(event) => setSingle({ ...single, email: event.target.value })} placeholder="account@example.com" dir="ltr" /></label>
             <label>كلمة المرور *<input value={single.password} onChange={(event) => setSingle({ ...single, password: event.target.value })} placeholder="Password" dir="ltr" /></label>
-            <label>مفتاح OTP<input value={single.otpSecret} onChange={(event) => setSingle({ ...single, otpSecret: event.target.value })} placeholder="JBSWY3DPEHPK3PXP" dir="ltr" /></label>
-            <label>موقع استخراج OTP<input type="url" value={single.otpUrl} onChange={(event) => setSingle({ ...single, otpUrl: event.target.value })} placeholder="https://2fa.live" dir="ltr" /></label>
+            {requiresOtp && <><label>مفتاح OTP *<input value={single.otpSecret} onChange={(event) => setSingle({ ...single, otpSecret: event.target.value })} placeholder="JBSWY3DPEHPK3PXP" dir="ltr" /></label><label>موقع استخراج OTP<input type="url" value={single.otpUrl} onChange={(event) => setSingle({ ...single, otpUrl: event.target.value })} placeholder="https://2fa.live" dir="ltr" /></label></>}
           </div>
         ) : tab === "paste" ? (
           <>
@@ -2224,13 +2216,14 @@ function AddServiceModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [name, setName] = useState("");
   const [limit, setLimit] = useState(5);
   const [cost, setCost] = useState(0);
+  const [requiresOtp, setRequiresOtp] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   async function save() {
     if (name.trim().length < 2) { setError("اكتب اسم الخدمة"); return; }
     setSaving(true); setError("");
     try {
-      const response = await fetch("/api/services", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, defaultDailyLimit: limit, defaultCost: Math.max(0, Math.round(cost)) }) });
+      const response = await fetch("/api/services", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, defaultDailyLimit: limit, defaultCost: Math.max(0, Math.round(cost)), requiresOtp }) });
       const result = await response.json();
       if (!response.ok) { setError(result.error === "SERVICE_EXISTS" ? "الخدمة موجودة بالفعل" : "تعذر إضافة الخدمة"); return; }
       onCreated(`تمت إضافة خدمة ${result.service.name}`);
@@ -2238,7 +2231,7 @@ function AddServiceModal({ onClose, onCreated }: { onClose: () => void; onCreate
   }
   return <div className="modalBackdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="simpleModal"><header><div><h2>إضافة خدمة جديدة</h2><p>سيصبح لها مخزون مستقل ويمكن رفع حساباتها مباشرة.</p></div><button onClick={onClose}>×</button></header>
-      <div className="modalForm"><label>اسم الخدمة<input value={name} onChange={(event) => setName(event.target.value)} placeholder="مثال: Gemini Advanced" /></label><label>الحد اليومي الافتراضي<input type="number" min="0" value={limit} onChange={(event) => setLimit(Math.max(0, Number(event.target.value)))} /></label><label>سعر التكلفة الافتراضي (ج.م)<input type="number" min="0" value={cost || ""} onChange={(event) => setCost(Math.max(0, Number(event.target.value) || 0))} placeholder="0" /></label>{error && <p className="formError">{error}</p>}</div>
+      <div className="modalForm"><label>اسم الخدمة<input value={name} onChange={(event) => setName(event.target.value)} placeholder="مثال: Gemini Advanced" /></label><label>الحد اليومي الافتراضي<input type="number" min="0" value={limit} onChange={(event) => setLimit(Math.max(0, Number(event.target.value)))} /></label><label>سعر التكلفة الافتراضي (ج.م)<input type="number" min="0" value={cost || ""} onChange={(event) => setCost(Math.max(0, Number(event.target.value) || 0))} placeholder="0" /></label><div className="serviceOption"><div><b>الحسابات تحتاج OTP</b><span>{requiresOtp ? "سيُطلب مفتاح OTP عند إضافة الحساب" : "سيكفي الإيميل وكلمة المرور"}</span></div><button type="button" aria-pressed={requiresOtp} onClick={() => setRequiresOtp((value) => !value)} className={requiresOtp ? "toggle on" : "toggle"}><i /></button></div>{error && <p className="formError">{error}</p>}</div>
       <footer><button className="secondary" onClick={onClose}>إلغاء</button><button className="primary" disabled={saving} onClick={save}>{saving ? "جارٍ الحفظ..." : "إضافة الخدمة"}</button></footer>
     </section>
   </div>;
