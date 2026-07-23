@@ -21,6 +21,7 @@ export const serviceCatalogue: [string, number][] = [
 ];
 const CATALOGUE_MARKER = "services-catalogue-v2";
 const PRO_APPS_SEED_MARKER = "pro-apps-dummy-stock-v1";
+const PRO_APPS_SEED_MARKER_V2 = "pro-apps-demo-stock-v2";
 
 const schema = [
   `CREATE TABLE IF NOT EXISTS organizations (
@@ -345,6 +346,25 @@ export async function ensureDb() {
   }
   try {
     await globalThis.stockflowCatalogueReady;
+    const pool=getPool();
+    const seeded=await pool.query("SELECT 1 FROM activity_logs WHERE id=$1 LIMIT 1",[PRO_APPS_SEED_MARKER_V2]);
+    if(!seeded.rows.length){
+      const targets=await pool.query<{organization_id:string;service_id:string}>("SELECT organization_id,id AS service_id FROM services WHERE name='Pro Apps'");
+      for(const target of targets.rows){
+        const rows=[
+          ["shared-team-01@demo.stockflow.app","SHARED",5,0],["shared-team-02@demo.stockflow.app","SHARED",5,2],
+          ["shared-agency@demo.stockflow.app","SHARED",10,4],["individual-01@demo.stockflow.app","INDIVIDUAL",1,0],
+          ["individual-02@demo.stockflow.app","INDIVIDUAL",1,0],["individual-03@demo.stockflow.app","INDIVIDUAL",1,0],
+        ] as const;
+        for(let index=0;index<rows.length;index++){
+          const [email,type,maxUsage,currentUsage]=rows[index];
+          await pool.query(`INSERT INTO inventory_items(id,organization_id,service_id,email,password,otp_secret,otp_url,account_type,max_usage,current_usage,status,expiry_date)
+            VALUES($1,$2,$3,$4,'Demo@StockFlow2026','JBSWY3DPEHPK3PXP','https://2fa.live/tok/JBSWY3DPEHPK3PXP',$5,$6,$7,CASE WHEN $7>=$6 THEN 'FULL' ELSE 'AVAILABLE' END,'2026-12-31') ON CONFLICT DO NOTHING`,
+            [`DEMO-PA-${target.organization_id.slice(0,8)}-${index+1}`,target.organization_id,target.service_id,email,type,maxUsage,currentUsage]);
+        }
+      }
+      await pool.query("INSERT INTO activity_logs(id,action,metadata) VALUES($1,'PRO_APPS_DEMO_SEED',$2) ON CONFLICT DO NOTHING",[PRO_APPS_SEED_MARKER_V2,JSON.stringify({services:targets.rows.length})]);
+    }
   } catch (error) {
     globalThis.stockflowCatalogueReady = undefined;
     throw error;

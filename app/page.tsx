@@ -2109,22 +2109,16 @@ function Services({
       <div className="serviceGrid">
         {cards.map((s) => (
           <section className="serviceCard" key={s.name}>
-            <div>
+            <header className="serviceCardHead">
               <span
                 className="serviceIcon large"
                 style={{ background: s.color }}
               >
                 {s.code}
               </span>
-              <button onClick={() => onView(s.name)} aria-label={`عرض مخزون ${s.name}`}>المخزون</button>
-            </div>
-            <h3>{s.name}</h3>
-            <p>
-              <span>{s.type}</span>
-              <span className={s.stock < 15 ? "low" : "good"}>
-                {s.stock < 15 ? "مخزون منخفض" : "نشطة"}
-              </span>
-            </p>
+              <div><h3>{s.name}</h3><p><span>{s.type}</span><span className={s.stock < 15 ? "low" : "good"}>{s.stock < 15 ? "مخزون منخفض" : "متاح"}</span></p></div>
+              <button className="serviceOpen" onClick={() => onView(s.name)} aria-label={`عرض مخزون ${s.name}`}><ArrowLeft size={16}/></button>
+            </header>
             <div className="serviceNumbers">
               <div>
                 <span>المتاح</span>
@@ -2139,8 +2133,9 @@ function Services({
                 <b>{s.total}</b>
               </div>
             </div>
+            <div className="serviceAvailability"><span>نسبة المتاح</span><b>{s.total?Math.round((s.stock/s.total)*100):0}%</b></div>
             <div className="progress">
-              <i style={{ width: `${(s.stock / s.total) * 100}%` }} />
+              <i style={{ width: `${s.total?(s.stock/s.total)*100:0}%` }} />
             </div>
             <footer>
               <ServiceCostEditor key={`${s.id}-${s.defaultCost}`} id={s.id} cost={s.defaultCost} onSave={saveCost} />

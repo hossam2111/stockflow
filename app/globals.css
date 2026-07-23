@@ -3911,3 +3911,23 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .salesEditor footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--line); }
 @media (max-width: 980px){.salesForm{grid-template-columns:repeat(2,1fr)}}
 @media (max-width: 560px){.salesForm{grid-template-columns:1fr}.salesForm .wide{grid-column:auto}}
+
+/* Compact service catalogue */
+.serviceGrid{gap:14px;align-items:start}
+.serviceCard{position:relative;overflow:hidden;padding:0;border-radius:16px;box-shadow:0 10px 30px #10233e0a;transition:transform .18s ease,box-shadow .18s ease}
+.serviceCard:hover{transform:translateY(-2px);box-shadow:0 16px 38px #10233e12}
+.serviceCard .serviceCardHead{display:grid;grid-template-columns:48px 1fr 34px;align-items:center;gap:12px;padding:16px 17px;background:linear-gradient(135deg,color-mix(in srgb,var(--card) 92%,#eef4ff),var(--card));border-bottom:1px solid var(--line)}
+.serviceCardHead .serviceIcon.large{width:46px;height:46px;border-radius:13px;box-shadow:inset 0 0 0 1px #ffffff38,0 7px 16px #10233e14}
+.serviceCardHead h3{margin:0 0 6px;font-size:14px;font-weight:900}
+.serviceCardHead p{display:flex;gap:6px;margin:0}
+.serviceCardHead p span{padding:3px 7px;border-radius:999px;background:var(--bg);color:var(--muted);font-size:8px}
+.serviceCardHead p .good{color:#047857;background:#e8faf4}.serviceCardHead p .low{color:#b45309;background:#fff3df}
+.serviceCard .serviceOpen{display:grid;place-items:center;width:32px;height:32px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:#2563eb}
+.serviceCard .serviceNumbers{margin:0;padding:15px 17px 11px;background:var(--card)}
+.serviceCard .serviceNumbers div{text-align:center}.serviceCard .serviceNumbers span{font-size:9px}.serviceCard .serviceNumbers b{font-size:21px;line-height:1.25}
+.serviceAvailability{display:flex!important;justify-content:space-between;align-items:center;padding:0 17px 7px;color:var(--muted);font-size:9px}.serviceAvailability b{color:var(--text);font-size:10px}
+.serviceCard>.progress{height:6px;margin:0 17px 14px;background:var(--bg);border-radius:999px;overflow:hidden}.serviceCard>.progress i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#2563eb,#6366f1)}
+.serviceCard footer{align-items:center;margin:0;padding:12px 17px;border-top:1px solid var(--line);background:color-mix(in srgb,var(--card) 94%,#f6f8fc)}
+.serviceCard footer>div{align-items:center}.serviceCard footer button{font-size:9px}.serviceCard footer .uploadService{padding:7px 10px;border-radius:8px}
+.costEditor{display:flex;align-items:center;gap:7px}.costEditor input{height:32px!important;width:74px!important;border-radius:8px!important}
+@media(max-width:760px){.serviceCard footer>div{flex-direction:row}.serviceCard .serviceCardHead{grid-template-columns:44px 1fr 32px}}
