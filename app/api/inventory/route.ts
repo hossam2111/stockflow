@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { query, transaction } from "@/lib/db";
 import { z } from "zod";
-import { requireWorkspaceAdmin } from "@/lib/auth";
+import { requireWorkspacePermission } from "@/lib/auth";
 
 const itemSchema = z.object({
   serviceId: z.string().min(1), email: z.string().email(), password: z.string().min(1),
@@ -10,7 +10,7 @@ const itemSchema = z.object({
 });
 
 export async function GET(request: Request) {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
+  const context=await requireWorkspacePermission("inventory.view");if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
   const url = new URL(request.url); const serviceId = url.searchParams.get("serviceId"); const search = url.searchParams.get("search") || "";
   const values: unknown[] = [context.organizationId];
   const filters = ["i.organization_id=$1"];
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
+  const context=await requireWorkspacePermission("inventory.manage");if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
   const body = await request.json(); const rows = z.array(itemSchema).min(1).max(10000).safeParse(body.items);
   if (!rows.success) return NextResponse.json({ error:"INVALID_ITEMS", details:rows.error.flatten() }, { status:400 });
   const organization=await query<{inventory_limit:number}>("SELECT inventory_limit FROM organizations WHERE id=$1",[context.organizationId]);
@@ -66,7 +66,7 @@ const patchSchema = z.object({
 });
 
 export async function PATCH(request: Request) {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
+  const context=await requireWorkspacePermission("inventory.manage");if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
   const id=new URL(request.url).searchParams.get("id");
   if(!id)return NextResponse.json({error:"INVALID_INPUT"},{status:400});
   const body=await request.json().catch(()=>({}));const parsed=patchSchema.safeParse(body);
@@ -112,7 +112,7 @@ export async function DELETE(request: Request) {
   // super admin's currently selected organization. Scoping every query to context.organizationId is
   // what enforces the hierarchy: an org admin can only ever touch their own workspace's inventory,
   // while the super admin manages whichever organization they have switched into.
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
+  const context=await requireWorkspacePermission("inventory.manage");if(!context)return NextResponse.json({error:"FORBIDDEN"},{status:403});
   const id=new URL(request.url).searchParams.get("id");
   if(!id)return NextResponse.json({error:"INVALID_INPUT"},{status:400});
   try {

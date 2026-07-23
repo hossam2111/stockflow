@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { query } from "@/lib/db";
-import { requireWorkspaceAdmin } from "@/lib/auth";
+import { requireWorkspacePermission } from "@/lib/auth";
 
 export async function GET() {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("dashboard.view");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
   const startOfMonth = new Date(startOfDay.getFullYear(), startOfDay.getMonth(), 1);
   const trendStart = new Date(startOfDay); trendStart.setDate(trendStart.getDate() - 6);

@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { query } from "@/lib/db";
 import { z } from "zod";
-import { requireWorkspaceAdmin } from "@/lib/auth";
+import { requireWorkspacePermission } from "@/lib/auth";
 
 export async function GET(request: Request) {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("suppliers.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const params=new URL(request.url).searchParams; const supplierId=params.get("supplierId"); const from=params.get("from"); const to=params.get("to");
   const values:unknown[]=[context.organizationId]; const filters=["p.organization_id=$1"];
   if(supplierId){values.push(supplierId);filters.push(`p.supplier_id=$${values.length}`);}
@@ -28,7 +28,7 @@ const createSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("suppliers.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const parsed=createSchema.safeParse(await request.json());
   if(!parsed.success)return NextResponse.json({ error: "INVALID_INPUT" }, { status: 400 });
   const owner=await query("SELECT id FROM suppliers WHERE id=$1 AND organization_id=$2",[parsed.data.supplierId,context.organizationId]);
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("suppliers.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const id=new URL(request.url).searchParams.get("id");
   if(!id)return NextResponse.json({ error: "INVALID_INPUT" }, { status: 400 });
   const result=await query("DELETE FROM purchases WHERE id=$1 AND organization_id=$2 RETURNING id",[id,context.organizationId]);

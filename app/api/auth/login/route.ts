@@ -13,7 +13,8 @@ export async function POST(request:Request){
   const user=result.rows[0];
   if(!user||!(await bcrypt.compare(parsed.data.password,user.password_hash)))return NextResponse.json({error:"INVALID_CREDENTIALS"},{status:401});
   if(user.role==="ADMIN"&&!user.is_super_admin&&!user.active)return NextResponse.json({error:"ORGANIZATION_DISABLED"},{status:403});
-  await createSession({id:user.id,email:user.email,name:user.name,role:user.role,organizationId:user.organization_id,isSuperAdmin:user.is_super_admin});
+  const settings=user.organization_id?await query<{session_timeout_minutes:number}>("SELECT session_timeout_minutes FROM organization_settings WHERE organization_id=$1",[user.organization_id]):null;
+  await createSession({id:user.id,email:user.email,name:user.name,role:user.role,organizationId:user.organization_id,isSuperAdmin:user.is_super_admin},settings?.rows[0]?.session_timeout_minutes??480);
   let selectedOrganizationId=user.organization_id;
   if(user.is_super_admin){
     const firstOrg=await query<{id:string}>("SELECT id FROM organizations WHERE active=TRUE ORDER BY created_at ASC LIMIT 1");

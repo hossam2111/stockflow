@@ -1,11 +1,13 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
+import type { PermissionKey } from "@/lib/access-control";
 
 const secret=new TextEncoder().encode(process.env.AUTH_SECRET||"stockflow-development-secret-change-in-production");
 export type SessionUser={id:string;email:string;name:string;role:"ADMIN"|"EMPLOYEE";organizationId:string|null;isSuperAdmin:boolean};
-export async function createSession(user:SessionUser){
-  const token=await new SignJWT(user).setProtectedHeader({alg:"HS256"}).setSubject(user.id).setIssuedAt().setExpirationTime("8h").sign(secret);
-  (await cookies()).set("stockflow_session",token,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",path:"/",maxAge:60*60*8});
+export async function createSession(user:SessionUser,timeoutMinutes=480){
+  const minutes=Math.min(1440,Math.max(15,timeoutMinutes));
+  const token=await new SignJWT(user).setProtectedHeader({alg:"HS256"}).setSubject(user.id).setIssuedAt().setExpirationTime(`${minutes}m`).sign(secret);
+  (await cookies()).set("stockflow_session",token,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",path:"/",maxAge:60*minutes});
 }
 export async function getSession():Promise<SessionUser|null>{
   const token=(await cookies()).get("stockflow_session")?.value;if(!token)return null;
@@ -33,4 +35,12 @@ export async function requireWorkspaceAccounting(){
   const {query}=await import("@/lib/db");
   const permission=await query<{can_manage_accounting:boolean;active:boolean}>("SELECT can_manage_accounting,active FROM users WHERE id=$1 AND organization_id=$2 AND role='EMPLOYEE'",[context.session.id,context.organizationId]);
   return permission.rows[0]?.active&&permission.rows[0]?.can_manage_accounting?context:null;
+}
+
+export async function requireWorkspacePermission(permission:PermissionKey){
+  const context=await getWorkspaceContext();
+  if(!context?.organizationId)return null;
+  const {getUserAccess}=await import("@/lib/access-control");
+  const access=await getUserAccess(context.session.id,context.organizationId,context.session.role);
+  return access.permissions.includes(permission)?{...context,access}:null;
 }

@@ -34,6 +34,7 @@ const schema = [
     organization_id TEXT REFERENCES organizations(id), is_super_admin BOOLEAN NOT NULL DEFAULT FALSE,
     team TEXT, active BOOLEAN NOT NULL DEFAULT TRUE, daily_limit INTEGER NOT NULL DEFAULT 20,
     can_manage_accounting BOOLEAN NOT NULL DEFAULT FALSE,
+    access_role TEXT NOT NULL DEFAULT 'EMPLOYEE',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   `CREATE TABLE IF NOT EXISTS services (
@@ -47,6 +48,20 @@ const schema = [
     service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
     enabled BOOLEAN NOT NULL DEFAULT TRUE, daily_limit INTEGER NOT NULL DEFAULT 5,
     PRIMARY KEY (user_id, service_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS user_permissions (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    permission_key TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    PRIMARY KEY(user_id,permission_key)
+  )`,
+  `CREATE TABLE IF NOT EXISTS organization_settings (
+    organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    system_name TEXT NOT NULL DEFAULT 'StockFlow', timezone TEXT NOT NULL DEFAULT 'Africa/Cairo',
+    currency TEXT NOT NULL DEFAULT 'EGP', language TEXT NOT NULL DEFAULT 'ar',
+    allocation_strategy TEXT NOT NULL DEFAULT 'FIFO', low_stock_threshold INTEGER NOT NULL DEFAULT 5,
+    session_timeout_minutes INTEGER NOT NULL DEFAULT 480, allow_shared_accounts BOOLEAN NOT NULL DEFAULT TRUE,
+    notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   `CREATE TABLE IF NOT EXISTS inventory_items (
     id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id), service_id TEXT NOT NULL REFERENCES services(id),
@@ -173,6 +188,9 @@ export async function ensureDb() {
       // whole tables. Only the expensive ~85-query DATA seed is gated by the completion marker.
       for (const statement of schema) await pool.query(statement);
       await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS can_manage_accounting BOOLEAN NOT NULL DEFAULT FALSE");
+      await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS access_role TEXT NOT NULL DEFAULT 'EMPLOYEE'");
+      await pool.query("UPDATE users SET access_role=CASE WHEN role='ADMIN' THEN 'OWNER' WHEN can_manage_accounting THEN 'ACCOUNTANT' ELSE COALESCE(NULLIF(access_role,''),'EMPLOYEE') END");
+      await pool.query("INSERT INTO organization_settings(organization_id) SELECT id FROM organizations ON CONFLICT(organization_id) DO NOTHING");
       await pool.query(`INSERT INTO sales(id,organization_id,withdrawal_id,created_by,source,service_name,item_description,
         customer_name,customer_phone,quantity,total_amount,cost_amount,paid_amount,status,notes,sold_at,created_at)
         SELECT 'SALE-'||w.id,w.organization_id,w.id,w.user_id,'WITHDRAWAL',s.name,s.name,

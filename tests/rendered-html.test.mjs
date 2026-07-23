@@ -82,7 +82,8 @@ test("stores a separate encrypted OpenAI connection for each admin", async () =>
 
 test("isolates every admin inventory operation to their own organization", async () => {
   const inventory = await read("app/api/inventory/route.ts");
-  assert.match(inventory, /requireWorkspaceAdmin/);
+  assert.match(inventory, /requireWorkspacePermission\("inventory\.view"\)/);
+  assert.match(inventory, /requireWorkspacePermission\("inventory\.manage"\)/);
   assert.match(inventory, /i\.organization_id=\$1/);
   assert.match(inventory, /SELECT id FROM services WHERE id=\$1 AND organization_id=\$2/);
   assert.match(inventory, /WHERE id=\$1 AND organization_id=\$2 FOR UPDATE/);
@@ -97,7 +98,8 @@ test("records withdrawals in an editable sales ledger and supports manual sales"
   ]);
   assert.match(page, /view === "sales"/);
   assert.match(page, /method:editing\?"PATCH":"POST"/);
-  assert.match(sales, /requireWorkspaceAdmin/);
+  assert.match(sales, /requireWorkspacePermission\("sales\.view_all"\)/);
+  assert.match(sales, /requireWorkspacePermission\("sales\.manage"\)/);
   assert.match(sales, /source,service_name,item_description/);
   assert.match(sales, /WHERE id=\$11 AND organization_id=\$12/);
   assert.doesNotMatch(page, /بيان المبيعة/);
@@ -111,11 +113,23 @@ test("keeps employees limited and grants accounting access explicitly per organi
     read("app/page.tsx"), read("lib/auth.ts"), read("app/api/employees/[id]/route.ts"),
     read("app/api/accounting/route.ts"), read("app/api/expenses/route.ts"),
   ]);
-  assert.match(page, /currentUser\?\.canManageAccounting/);
-  assert.match(page, /صلاحية المحاسب/);
-  assert.match(auth, /requireWorkspaceAccounting/);
+  assert.match(page, /currentUser\?\.permissions/);
+  assert.match(page, /الدور الوظيفي والصلاحيات/);
+  assert.match(auth, /requireWorkspacePermission/);
   assert.match(auth, /organization_id=\$2/);
   assert.match(employees, /can_manage_accounting/);
-  assert.match(accounting, /requireWorkspaceAccounting/);
-  assert.match(expenses, /requireWorkspaceAccounting/);
+  assert.match(accounting, /requireWorkspacePermission\("accounting\.view"\)/);
+  assert.match(expenses, /requireWorkspacePermission\("accounting\.(view|manage)"\)/);
+});
+
+test("persists organization settings and applies allocation policy server-side",async()=>{
+  const [page,settings,withdrawals,database]=await Promise.all([read("app/page.tsx"),read("app/api/settings/route.ts"),read("app/api/withdrawals/route.ts"),read("lib/db.ts")]);
+  assert.match(page,/fetch\("\/api\/settings"/);
+  assert.doesNotMatch(page,/stockflow-settings/);
+  assert.match(settings,/organization_settings/);
+  assert.match(settings,/requireWorkspacePermission\("settings\.manage"\)/);
+  assert.match(withdrawals,/allocation_strategy/);
+  assert.match(withdrawals,/allow_shared_accounts/);
+  assert.match(database,/CREATE TABLE IF NOT EXISTS user_permissions/);
+  assert.match(database,/CREATE TABLE IF NOT EXISTS organization_settings/);
 });

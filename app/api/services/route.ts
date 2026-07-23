@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { query } from "@/lib/db";
-import { getWorkspaceContext, requireWorkspaceAdmin } from "@/lib/auth";
+import { getWorkspaceContext, requireWorkspacePermission } from "@/lib/auth";
 import { z } from "zod";
 
 export async function GET() {
@@ -26,7 +26,7 @@ const createSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("services.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const parsed = createSchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ error: "INVALID_INPUT", details: parsed.error.flatten() }, { status: 400 });
   const { name, defaultDailyLimit, defaultCost } = parsed.data;
@@ -62,7 +62,7 @@ const updateSchema = z.object({
 });
 
 export async function PATCH(request: Request) {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("services.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const id = new URL(request.url).searchParams.get("id");
   if (!id) return NextResponse.json({ error: "INVALID_INPUT" }, { status: 400 });
   const parsed = updateSchema.safeParse(await request.json());

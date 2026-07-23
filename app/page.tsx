@@ -74,6 +74,7 @@ const nav: { id: View; label: string; icon: LucideIcon }[] = [
   { id: "activity", label: "سجل النشاط", icon: History },
   { id: "settings", label: "الإعدادات", icon: SettingsIcon },
 ];
+const viewPermissions:Partial<Record<View,string>>={dashboard:"dashboard.view",inventory:"inventory.view",services:"services.manage",employees:"employees.manage",reports:"reports.view",sales:"sales.view_all",accounting:"accounting.view",suppliers:"suppliers.manage",activity:"activity.view",settings:"settings.manage"};
 
 // Canonical service catalogue. The array order is also the display order across the app
 // (Google, ChatGPT, CapCut, Grok, then the rest). stock/used/total are cosmetic fallbacks
@@ -189,7 +190,7 @@ type DashboardStats = {
 
 type EmployeeRecord = {
   id: string; email: string; name: string; initials: string; team: string; today: number; limit: number; month: number;
-  enabled: boolean; canManageAccounting:boolean; color: string; allowed: { id: string; name: string; enabled: boolean; limit: number }[];
+  enabled: boolean; accessRole:"ADMIN"|"ACCOUNTANT"|"SALES"|"EMPLOYEE"|"AUDITOR"; canManageAccounting:boolean; color: string; allowed: { id: string; name: string; enabled: boolean; limit: number }[];
 };
 
 type CurrentUser = {
@@ -203,6 +204,8 @@ type CurrentUser = {
   organizationName?: string;
   isSuperAdmin?: boolean;
   canManageAccounting?: boolean;
+  accessRole?: string;
+  permissions?: string[];
 };
 
 type OrganizationRecord = {
@@ -395,7 +398,7 @@ export default function Home() {
         setRole(user.role);
         setLoggedIn(true);
         setEmployeeBlocked(user.role === "employee" && !user.active);
-        setView(user.role === "employee" ? "withdraw" : "dashboard");
+        setView(user.role === "employee" ? (user.permissions?.includes("withdrawals.create")?"withdraw":user.permissions?.includes("dashboard.view")?"dashboard":"activity") : "dashboard");
       })
       .catch(() => {})
       .finally(() => setAuthChecked(true));
@@ -456,7 +459,7 @@ export default function Home() {
         type: selected.available_shared_slots > 0 ? "مشترك" : "فردي",
       }));
     }).catch(() => {});
-    if (role === "admin") {
+    if (role === "admin" || currentUser?.permissions?.includes("inventory.view")) {
       fetch("/api/inventory").then((r) => r.ok ? r.json() : Promise.reject()).then((data) => {
         setInventoryData(data.items.map((item: Record<string, unknown>) => ({
           id: String(item.id), serviceId: String(item.service_id), service: String(item.service), account: String(item.email),
@@ -468,9 +471,11 @@ export default function Home() {
           expiryDate: item.expiry_date ? String(item.expiry_date).slice(0, 10) : null,
         })));
       }).catch(() => {});
+    }
+    if (role === "admin" || currentUser?.permissions?.includes("dashboard.view")) {
       fetch("/api/dashboard").then((r) => r.ok ? r.json() : Promise.reject()).then(setDashboardStats).catch(() => {});
     }
-  }, [loggedIn, role, dataVersion, selectedService.name]);
+  }, [loggedIn, role, dataVersion, selectedService.name,currentUser?.permissions]);
 
   async function attemptWithdrawal(details: WithdrawalCustomerDetails) {
     const selectedId = serviceData.find((service) => service.name === effectiveSelectedService.name)?.id ?? serviceIds[effectiveSelectedService.name];
@@ -522,7 +527,7 @@ export default function Home() {
           setRole(user.role);
           setLoggedIn(true);
           setEmployeeBlocked(user.role === "employee" && !user.active);
-          setView(user.role === "employee" ? "withdraw" : "dashboard");
+          setView(user.role === "employee" ? (user.permissions?.includes("withdrawals.create")?"withdraw":user.permissions?.includes("dashboard.view")?"dashboard":"activity") : "dashboard");
         }}
       />
     );
@@ -552,7 +557,7 @@ export default function Home() {
             .filter(
               (item) => item.id === "organizations"
                 ? Boolean(currentUser?.isSuperAdmin)
-                : role === "admin" || item.id === "withdraw" || item.id === "activity" || (item.id === "accounting" && Boolean(currentUser?.canManageAccounting)),
+                : role === "admin" || (item.id === "withdraw"&&Boolean(currentUser?.permissions?.includes("withdrawals.create"))) || item.id === "activity" || Boolean(viewPermissions[item.id]&&currentUser?.permissions?.includes(viewPermissions[item.id] as string)),
             )
             .map((item) => {
               const NavIcon = item.icon;
@@ -737,10 +742,10 @@ export default function Home() {
           {view === "employees" && <Employees flash={flash} />}
           {view === "reports" && <Reports />}
           {view === "sales" && <Sales flash={flash} services={serviceData} />}
-          {view === "accounting" && (role === "admin" || currentUser?.canManageAccounting) && <Accounting flash={flash} dataVersion={dataVersion} onChanged={() => setDataVersion((value) => value + 1)} />}
+          {view === "accounting" && (role === "admin" || currentUser?.permissions?.includes("accounting.view")) && <Accounting flash={flash} dataVersion={dataVersion} onChanged={() => setDataVersion((value) => value + 1)} />}
           {view === "suppliers" && <Suppliers flash={flash} services={serviceData} />}
           {view === "activity" &&
-            (role === "admin" ? <Activity /> : <EmployeeHistory access={employeeAccess} />)}
+            (role === "admin" || currentUser?.permissions?.includes("activity.view") ? <Activity /> : <EmployeeHistory access={employeeAccess} />)}
           {view === "settings" && (
             <Settings dark={dark} setDark={setDark} flash={flash} />
           )}
@@ -2238,7 +2243,7 @@ function Employees({ flash }: { flash: (s: string) => void }) {
   const loadEmployees = useCallback(() => fetch("/api/employees").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => setTeam(data.employees.map((item: Record<string, unknown>, index: number) => ({
     id: String(item.id), email: String(item.email), name: String(item.name), initials: String(item.name).split(" ").map((part) => part[0]).slice(0, 2).join(" "),
     team: String(item.team ?? "بدون فريق"), today: Number(item.today ?? 0), month: Number(item.month ?? 0), limit: Number(item.daily_limit ?? 0),
-    enabled: Boolean(item.active), canManageAccounting:Boolean(item.can_manage_accounting), color: ["#2563eb", "#7c3aed", "#db2777", "#ea580c"][index % 4],
+    enabled: Boolean(item.active), accessRole:String(item.access_role??"EMPLOYEE") as EmployeeRecord["accessRole"], canManageAccounting:Boolean(item.can_manage_accounting), color: ["#2563eb", "#7c3aed", "#db2777", "#ea580c"][index % 4],
     allowed: (item.permissions as Record<string, unknown>[]).map((permission) => ({ id: String(permission.id), name: String(permission.name), enabled: Boolean(permission.enabled), limit: Number(permission.daily_limit ?? 0) })),
   })))).catch(() => flash("تعذر تحميل بيانات الموظفين")), [flash]);
   useEffect(() => { loadEmployees(); }, [loadEmployees]);
@@ -2250,7 +2255,7 @@ function Employees({ flash }: { flash: (s: string) => void }) {
     );
   }
   async function saveEmployee(updated: (typeof team)[number]) {
-    const response=await fetch(`/api/employees/${updated.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({active:updated.enabled,dailyLimit:updated.limit,canManageAccounting:updated.canManageAccounting,permissions:updated.allowed.map(p=>({serviceId:p.id,enabled:p.enabled,dailyLimit:p.limit}))})});
+    const response=await fetch(`/api/employees/${updated.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({active:updated.enabled,dailyLimit:updated.limit,accessRole:updated.accessRole,canManageAccounting:updated.accessRole==="ACCOUNTANT",permissions:updated.allowed.map(p=>({serviceId:p.id,enabled:p.enabled,dailyLimit:p.limit}))})});
     if(!response.ok){flash("تعذر حفظ صلاحيات الموظف");return;}
     setTeam((current) => current.map((e, i) => (i === editing ? updated : e)));
     setEditing(null);
@@ -2523,8 +2528,10 @@ function EmployeeEditor({
           </div>
         </section>
         <section className="generalLimit">
-          <div><h3>صلاحية المحاسب</h3><p>تسمح بمراجعة الحسابات، تسجيل المصروفات وتحصيل مديونيات العملاء داخل هذه الشركة فقط.</p></div>
-          <button type="button" className={draft.canManageAccounting?"toggle on":"toggle"} onClick={()=>setDraft({...draft,canManageAccounting:!draft.canManageAccounting})} aria-label="تفعيل صلاحية المحاسب"><i /></button>
+          <div><h3>الدور الوظيفي والصلاحيات</h3><p>كل دور يمنح أقل مجموعة صلاحيات لازمة، وجميعها تعمل داخل الشركة الحالية فقط.</p></div>
+          <select value={draft.accessRole} onChange={(event)=>setDraft({...draft,accessRole:event.target.value as EmployeeRecord["accessRole"]})} aria-label="الدور الوظيفي">
+            <option value="EMPLOYEE">موظف سحب</option><option value="SALES">موظف مبيعات</option><option value="ACCOUNTANT">محاسب</option><option value="AUDITOR">مراجع - قراءة فقط</option><option value="ADMIN">أدمن شركة</option>
+          </select>
         </section>
         <div className="servicePermissions">
           <div className="permissionHead">
@@ -3209,14 +3216,12 @@ function Settings({
   flash: (s: string) => void;
 }) {
   const [activeTab, setActiveTab] = useState("عام");
-  const [systemName, setSystemName] = useState("StockFlow");
-  const [fifo, setFifo] = useState(true);
-  const tabs = ["عام", "الذكاء الاصطناعي", "التخصيص والسحب", "الحدود", "الأمان", "الإشعارات", "النسخ الاحتياطي"];
-  function saveSettings() {
-    localStorage.setItem("stockflow-settings", JSON.stringify({ systemName, fifo, dark }));
-    flash("تم حفظ الإعدادات على هذا الجهاز");
-  }
-  function resetSettings() { setSystemName("StockFlow"); setFifo(true); setDark(false); flash("تم إلغاء التغييرات"); }
+  const [settings,setSettings]=useState({systemName:"StockFlow",timezone:"Africa/Cairo",currency:"EGP",language:"ar",allocationStrategy:"FIFO",lowStockThreshold:5,sessionTimeoutMinutes:480,allowSharedAccounts:true,notificationsEnabled:true});
+  const [saved,setSaved]=useState(settings);const [saving,setSaving]=useState(false);
+  const tabs = ["عام", "الذكاء الاصطناعي", "التخصيص والسحب", "الأمان", "الإشعارات"];
+  useEffect(()=>{fetch("/api/settings",{cache:"no-store"}).then(r=>r.ok?r.json():Promise.reject()).then(({settings:s})=>{const value={systemName:s.system_name,timezone:s.timezone,currency:s.currency,language:s.language,allocationStrategy:s.allocation_strategy,lowStockThreshold:Number(s.low_stock_threshold),sessionTimeoutMinutes:Number(s.session_timeout_minutes),allowSharedAccounts:Boolean(s.allow_shared_accounts),notificationsEnabled:Boolean(s.notifications_enabled)};setSettings(value);setSaved(value);}).catch(()=>flash("تعذر تحميل إعدادات الشركة"));},[flash]);
+  async function saveSettings(){setSaving(true);const response=await fetch("/api/settings",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(settings)});setSaving(false);if(!response.ok){flash("تعذر حفظ الإعدادات");return;}setSaved(settings);localStorage.setItem("stockflow-theme",dark?"dark":"light");flash("تم حفظ إعدادات الشركة وتطبيقها");}
+  function resetSettings(){setSettings(saved);flash("تم التراجع عن التغييرات غير المحفوظة");}
   return (
     <>
       <PageHead
@@ -3231,32 +3236,33 @@ function Settings({
           <h3>إعدادات {activeTab}</h3>
           <p>اضبط خيارات {activeTab} ثم اضغط حفظ التغييرات.</p>
           <hr />
-          <div className="formGrid">
+          {activeTab === "عام"&&<div className="formGrid">
             <label>
               اسم النظام
-              <input value={systemName} onChange={(event) => setSystemName(event.target.value)} />
+              <input value={settings.systemName} onChange={(event) => setSettings({...settings,systemName:event.target.value})} />
             </label>
             <label>
               المنطقة الزمنية
-              <select defaultValue="cairo">
-                <option value="cairo">Africa/Cairo (GMT+3)</option>
+              <select value={settings.timezone} onChange={event=>setSettings({...settings,timezone:event.target.value})}>
+                <option value="Africa/Cairo">Africa/Cairo</option><option value="UTC">UTC</option>
               </select>
             </label>
             <label>
               العملة
-              <select>
-                <option>الجنيه المصري (ج.م)</option>
+              <select value={settings.currency} onChange={event=>setSettings({...settings,currency:event.target.value})}>
+                <option value="EGP">الجنيه المصري</option><option value="USD">الدولار</option><option value="SAR">الريال السعودي</option><option value="AED">الدرهم الإماراتي</option>
               </select>
             </label>
             <label>
               اللغة
-              <select>
-                <option>العربية</option>
-                <option>English</option>
+              <select value={settings.language} onChange={event=>setSettings({...settings,language:event.target.value})}>
+                <option value="ar">العربية</option><option value="en">English</option>
               </select>
             </label>
-          </div>
-          <div className="settingRow">
+          </div>}
+          {activeTab === "التخصيص والسحب"&&<div className="formGrid"><label>سياسة اختيار المخزون<select value={settings.allocationStrategy} onChange={event=>setSettings({...settings,allocationStrategy:event.target.value})}><option value="FIFO">الأقدم أولًا - FIFO</option><option value="LIFO">الأحدث أولًا - LIFO</option></select></label><label>حد تنبيه انخفاض المخزون<input type="number" min={0} value={settings.lowStockThreshold} onChange={event=>setSettings({...settings,lowStockThreshold:Math.max(0,Number(event.target.value)||0)})}/></label></div>}
+          {activeTab === "الأمان"&&<div className="formGrid"><label>مدة الجلسة بالدقائق<input type="number" min={15} max={1440} value={settings.sessionTimeoutMinutes} onChange={event=>setSettings({...settings,sessionTimeoutMinutes:Math.max(15,Number(event.target.value)||15)})}/></label></div>}
+          {activeTab === "عام"&&<div className="settingRow">
             <div>
               <b>الوضع الداكن</b>
               <span>استخدم واجهة داكنة مريحة للعين.</span>
@@ -3267,23 +3273,23 @@ function Settings({
             >
               <i />
             </button>
-          </div>
-          <div className="settingRow">
+          </div>}
+          {activeTab === "التخصيص والسحب"&&<div className="settingRow">
             <div>
-              <b>تخصيص FIFO</b>
-              <span>اختيار أقدم عنصر متاح تلقائيًا.</span>
+              <b>السماح بالحسابات المشتركة</b><span>السماح باستخدام الحساب الواحد حتى سعته المحددة.</span>
             </div>
-            <button onClick={() => setFifo(!fifo)} className={fifo ? "toggle on" : "toggle"}>
+            <button onClick={() => setSettings({...settings,allowSharedAccounts:!settings.allowSharedAccounts})} className={settings.allowSharedAccounts ? "toggle on" : "toggle"}>
               <i />
             </button>
-          </div>
+          </div>}
+          {activeTab === "الإشعارات"&&<div className="settingRow"><div><b>إشعارات النظام</b><span>تنبيهات انخفاض المخزون والأحداث المهمة.</span></div><button onClick={()=>setSettings({...settings,notificationsEnabled:!settings.notificationsEnabled})} className={settings.notificationsEnabled?"toggle on":"toggle"}><i/></button></div>}
           <footer>
             <button className="secondary" onClick={resetSettings}>إلغاء</button>
             <button
               className="primary"
-              onClick={saveSettings}
+              onClick={saveSettings} disabled={saving}
             >
-              حفظ التغييرات
+              {saving?"جارٍ الحفظ...":"حفظ التغييرات"}
             </button>
           </footer>
         </section>}

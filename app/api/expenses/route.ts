@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { query } from "@/lib/db";
 import { z } from "zod";
-import { requireWorkspaceAccounting } from "@/lib/auth";
+import { requireWorkspacePermission } from "@/lib/auth";
 
 export async function GET(request: Request) {
-  const context=await requireWorkspaceAccounting();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("accounting.view");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const params=new URL(request.url).searchParams; const from=params.get("from"); const to=params.get("to");
   const values:unknown[]=[context.organizationId]; const filters=["organization_id=$1"];
   if(from){values.push(from);filters.push(`spent_at>=$${values.length}::date`);}
@@ -22,7 +22,7 @@ const createSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const context=await requireWorkspaceAccounting();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("accounting.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const parsed=createSchema.safeParse(await request.json());
   if(!parsed.success)return NextResponse.json({ error: "INVALID_INPUT", details: parsed.error.flatten() }, { status: 400 });
   const id=`exp-${crypto.randomUUID().slice(0,8)}`;
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const context=await requireWorkspaceAccounting();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("accounting.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const id=new URL(request.url).searchParams.get("id");
   if(!id)return NextResponse.json({ error: "INVALID_INPUT" }, { status: 400 });
   const result=await query("DELETE FROM expenses WHERE id=$1 AND organization_id=$2 RETURNING id",[id,context.organizationId]);

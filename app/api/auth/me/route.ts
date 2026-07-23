@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getWorkspaceContext } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { getUserAccess } from "@/lib/access-control";
 
 export async function GET() {
   const context = await getWorkspaceContext();
@@ -8,6 +9,7 @@ export async function GET() {
   const {session,organizationId}=context;
   const result = await query<{ active: boolean; team: string; can_manage_accounting:boolean }>("SELECT active,team,can_manage_accounting FROM users WHERE id=$1", [session.id]);
   const organization=organizationId?await query<{id:string;name:string}>("SELECT id,name FROM organizations WHERE id=$1",[organizationId]):null;
+  const access=organizationId?await getUserAccess(session.id,organizationId,session.role):{accessRole:"OWNER",permissions:[]};
   return NextResponse.json({
     user: {
       id: session.id,
@@ -20,6 +22,8 @@ export async function GET() {
       organizationName: organization?.rows[0]?.name ?? "إدارة المنصة",
       isSuperAdmin: session.isSuperAdmin,
       canManageAccounting: result.rows[0]?.can_manage_accounting ?? false,
+      accessRole: access.accessRole,
+      permissions: access.permissions,
     },
   });
 }

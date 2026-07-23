@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { transaction, query } from "@/lib/db";
 import { z } from "zod";
-import { requireWorkspaceAccounting } from "@/lib/auth";
+import { requireWorkspacePermission } from "@/lib/auth";
 
 const schema = z.object({
   customerPhone: z.string().trim().min(1).max(40).optional(),
@@ -12,7 +12,7 @@ const schema = z.object({
 // Records a customer payment: applies `amount` against that customer's outstanding COMPLETED
 // withdrawals (selling_price > paid_amount), oldest first, increasing paid_amount up to the price.
 export async function POST(request: Request) {
-  const context=await requireWorkspaceAccounting();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("accounting.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const parsed=schema.safeParse(await request.json());
   if(!parsed.success)return NextResponse.json({ error: "INVALID_INPUT" }, { status: 400 });
   const matchCol = parsed.data.customerPhone ? "customer_phone" : "customer_name";

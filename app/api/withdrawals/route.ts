@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isMemoryDatabase, transaction } from "@/lib/db";
 import { z } from "zod";
-import { getWorkspaceContext, requireWorkspaceAdmin } from "@/lib/auth";
+import { getWorkspaceContext, requireWorkspaceAdmin, requireWorkspacePermission } from "@/lib/auth";
 
 const schema = z.object({
   employeeId:z.string().default("omar"),
@@ -78,6 +78,9 @@ export async function POST(request: Request) {
       const unitCost=serviceRow.rows[0]?.default_cost ?? 0;
       const unitPaid=parsed.data.paidAmount ?? parsed.data.sellingPrice;
       const lock=isMemoryDatabase()?"":"FOR UPDATE SKIP LOCKED";
+      const settingsResult=await client.query<{allocation_strategy:string;allow_shared_accounts:boolean}>("SELECT allocation_strategy,allow_shared_accounts FROM organization_settings WHERE organization_id=$1",[context.organizationId]);
+      const allocationOrder=settingsResult.rows[0]?.allocation_strategy==="LIFO"?"DESC":"ASC";
+      const allowShared=settingsResult.rows[0]?.allow_shared_accounts??true;
       const batchId=`BATCH-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
       const allocatedIds:string[]=[];
       const withdrawalIds:string[]=[];
@@ -93,8 +96,9 @@ export async function POST(request: Request) {
       for(let index=0;index<parsed.data.quantity;index++){
         const inventoryResult=await client.query(`SELECT * FROM inventory_items WHERE organization_id=$1 AND service_id=$2
           AND status='AVAILABLE' AND current_usage<max_usage
-          ORDER BY CASE WHEN account_type='SHARED' THEN 0 ELSE 1 END, created_at ASC LIMIT 1 ${lock}`,
-          [context.organizationId,parsed.data.serviceId]);
+          AND ($3::boolean=TRUE OR account_type<>'SHARED')
+          ORDER BY CASE WHEN account_type='SHARED' THEN 0 ELSE 1 END, created_at ${allocationOrder} LIMIT 1 ${lock}`,
+          [context.organizationId,parsed.data.serviceId,allowShared]);
         const item=inventoryResult.rows[0];if(!item)throw new Error("OUT_OF_STOCK");allocatedIds.push(item.id);
         const updated=await client.query(`UPDATE inventory_items SET current_usage=current_usage+1,status=CASE WHEN current_usage+1>=max_usage THEN 'FULL' ELSE 'AVAILABLE' END WHERE id=$1 AND current_usage<max_usage RETURNING *`,[item.id]);
         const updatedItem=updated.rows[0];if(!updatedItem)throw new Error("INVENTORY_CONFLICT");
@@ -158,7 +162,8 @@ export async function GET(request:Request){
   const params=new URL(request.url).searchParams;
   const requested=params.get("employeeId");
   const from=params.get("from"); const to=params.get("to");
-  const employeeId=session.role==="EMPLOYEE"?session.id:requested;
+  const broadAccess=session.role==="ADMIN"||Boolean(await requireWorkspacePermission("reports.view"));
+  const employeeId=broadAccess?requested:session.id;
   const base=`SELECT w.id,w.user_id,w.status,w.created_at,w.batch_id,w.batch_quantity,w.previous_usage,w.new_usage,
     s.name AS service,w.inventory_item_id,u.name AS employee,i.account_type,
     i.email AS account_email,i.password AS account_password,i.otp_secret,i.otp_url,

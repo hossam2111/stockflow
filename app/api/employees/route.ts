@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { query, transaction } from "@/lib/db";
-import { requireWorkspaceAdmin } from "@/lib/auth";
+import { requireWorkspacePermission } from "@/lib/auth";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 
 export async function GET() {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
-  const users = await query(`SELECT id,email,name,team,active,daily_limit,can_manage_accounting,created_at FROM users
+  const context=await requireWorkspacePermission("employees.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const users = await query(`SELECT id,email,name,team,active,daily_limit,can_manage_accounting,access_role,created_at FROM users
     WHERE role='EMPLOYEE' AND organization_id=$1 ORDER BY created_at ASC`,[context.organizationId]);
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
   const startOfMonth = new Date(startOfDay.getFullYear(), startOfDay.getMonth(), 1);
@@ -33,7 +33,7 @@ const createSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("employees.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const parsed = createSchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ error: "INVALID_INPUT", details: parsed.error.flatten() }, { status: 400 });
   const organization=await query<{employee_limit:number}>("SELECT employee_limit FROM organizations WHERE id=$1",[context.organizationId]);
@@ -44,8 +44,8 @@ export async function POST(request: Request) {
   const id = `emp-${crypto.randomUUID().slice(0, 8)}`;
   const passwordHash = await bcrypt.hash(parsed.data.password, 10);
   await transaction(async (client) => {
-    await client.query(`INSERT INTO users(id,email,password_hash,name,role,organization_id,is_super_admin,team,active,daily_limit)
-      VALUES($1,$2,$3,$4,'EMPLOYEE',$5,FALSE,$6,TRUE,$7)`, [id,parsed.data.email.toLowerCase(),passwordHash,parsed.data.name,context.organizationId,parsed.data.team,parsed.data.dailyLimit]);
+    await client.query(`INSERT INTO users(id,email,password_hash,name,role,organization_id,is_super_admin,team,active,daily_limit,access_role)
+      VALUES($1,$2,$3,$4,'EMPLOYEE',$5,FALSE,$6,TRUE,$7,'EMPLOYEE')`, [id,parsed.data.email.toLowerCase(),passwordHash,parsed.data.name,context.organizationId,parsed.data.team,parsed.data.dailyLimit]);
     const services = await client.query("SELECT id,default_daily_limit FROM services WHERE active=TRUE AND organization_id=$1",[context.organizationId]);
     for (const service of services.rows) await client.query(`INSERT INTO employee_service_permissions(user_id,service_id,enabled,daily_limit)
       VALUES($1,$2,TRUE,$3)`, [id, service.id, service.default_daily_limit]);

@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { query, transaction } from "@/lib/db";
 import { z } from "zod";
-import { requireWorkspaceAdmin } from "@/lib/auth";
+import { requireWorkspacePermission } from "@/lib/auth";
 
 export async function GET() {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("suppliers.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const result=await query(`SELECT s.id,s.name,s.phone,s.notes,s.created_at,
     COALESCE(SUM(p.total),0)::int AS total_purchased,
     COALESCE(SUM(p.paid),0)::int AS total_paid,
@@ -22,7 +22,7 @@ const createSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("suppliers.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const parsed=createSchema.safeParse(await request.json());
   if(!parsed.success)return NextResponse.json({ error: "INVALID_INPUT" }, { status: 400 });
   const id=`sup-${crypto.randomUUID().slice(0,8)}`;
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
 // Pay a supplier: distributes `pay` across their purchases with an outstanding balance, oldest first.
 export async function PATCH(request: Request) {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("suppliers.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const id=new URL(request.url).searchParams.get("id");
   if(!id)return NextResponse.json({ error: "INVALID_INPUT" }, { status: 400 });
   const parsed=z.object({ pay: z.number().int().min(1).max(1000000000) }).safeParse(await request.json());
@@ -58,7 +58,7 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const context=await requireWorkspaceAdmin();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("suppliers.manage");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const id=new URL(request.url).searchParams.get("id");
   if(!id)return NextResponse.json({ error: "INVALID_INPUT" }, { status: 400 });
   // purchases are removed via ON DELETE CASCADE

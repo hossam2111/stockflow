@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { query } from "@/lib/db";
-import { requireWorkspaceAccounting } from "@/lib/auth";
+import { requireWorkspacePermission } from "@/lib/auth";
 
 // Full financial snapshot for the workspace, optionally limited to a [from,to] date range.
 export async function GET(request: Request) {
-  const context=await requireWorkspaceAccounting();if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const context=await requireWorkspacePermission("accounting.view");if(!context)return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const params=new URL(request.url).searchParams; const from=params.get("from"); const to=params.get("to");
   const org=context.organizationId;
 
